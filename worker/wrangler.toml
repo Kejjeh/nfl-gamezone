@@ -29,4 +29,4 @@ ALLOWED_ORIGIN = "https://kejjeh.github.io"
 # Create with:  npx wrangler kv namespace create GZ
 [[kv_namespaces]]
 binding = "GZ"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+id = "5a3054ce835744f68c109761ebc32f66"
