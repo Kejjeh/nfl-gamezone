@@ -57,15 +57,28 @@ async function pollScoreboard() {
 // Which games to pull plays for. Normally just the live ones. When a week is
 // pinned via ?week=N the slate is usually finished, so completed games are
 // pulled too - once each, since their plays will never change again.
-const backfilled = new Set();
+// Games whose full play log has been pulled. Every game is fetched whole
+// exactly once and tailed thereafter.
+//
+// The tail alone is not enough. It is a rolling window, so a game that
+// kicked off before the page loaded contributes only its last few plays:
+// scrolling back through the day finds nothing, and anything derived from
+// play text silently loses its history - which is how field-goal distances
+// went missing and a kicker scored 4 instead of 13. One full pull is ~37 KB
+// gzipped, paid once per game.
+const fullyLoaded = new Set();
 
 function playTargets() {
-  const live = liveGames();
-  if (!state.weekOverride) return live;
-  const done = [...state.games.values()]
-    .filter((g) => g.state === 'post' && !backfilled.has(g.id));
-  for (const g of done) backfilled.add(g.id);
-  return [...live, ...done];
+  const seen = new Set();
+  const out = [];
+  for (const g of liveGames()) { out.push(g); seen.add(g.id); }
+
+  // Finished games are worth one pull each so the morning slate is still in
+  // the feed when you open the page in the evening.
+  for (const g of state.games.values()) {
+    if (g.state === 'post' && !fullyLoaded.has(g.id) && !seen.has(g.id)) out.push(g);
+  }
+  return out;
 }
 
 async function pollPlays() {
@@ -75,10 +88,11 @@ async function pollPlays() {
   const batches = [];
   await pool(games, 4, async (g) => {
     try {
-      // A finished game gets pulled whole, once; a live one only its tail.
-      const plays = g.state === 'post'
+      const whole = !fullyLoaded.has(g.id);
+      const plays = whole
         ? await espn.fetchAllPlays(g.id)
         : await espn.fetchPlaysTail(g.id);
+      if (whole && plays.length) fullyLoaded.add(g.id);
       batches.push(plays);
     } catch (err) {
       console.warn('[plays] failed', g.shortName, err);
@@ -101,6 +115,8 @@ async function pollMatchups() {
     state.sleeper.error = err.message;
   }
   matchup.render();
+  rail.render();                            // starter counts per game
+  panel.render();                           // My Team points and game states
   if (state.bridge.ready) feed.rebuild();   // points and lineups changed
 }
 
@@ -173,6 +189,10 @@ async function connectSleeper(username, leagueId) {
     const st = await sleeper.getNflState();
     state.sleeperWeek = st?.week || null;
   } catch (err) { /* fall back to ESPN's week */ }
+
+  // Once a league is connected, your own lineup is the most useful thing the
+  // panel can show, so open on it - unless the tab was chosen by hand.
+  if (!state.panel.userPicked) state.panel.tab = 'team';
 
   await pollMatchups();
   pollers.league.start();

@@ -2,6 +2,7 @@
 // poll - 15 rows is far too cheap to bother diffing.
 import { state, emit } from './state.js';
 import * as espn from './espn.js';
+import * as sleeper from './sleeper.js';
 
 const ORDER = { in: 0, pre: 1, post: 2 };
 
@@ -37,6 +38,30 @@ function teamRow(g, t, mine, other, live) {
     </div>`;
 }
 
+// How many of your starters, and your opponent's, are playing in each game.
+// Built once per render rather than per row: the rail is the surface you scan
+// to decide where to look, and without this it says nothing about your team.
+function starterCounts() {
+  const s = state.sleeper;
+  const counts = new Map();
+  if (!s.leagueId) return counts;
+
+  const tally = (ids, key) => {
+    for (const pid of ids || []) {
+      const g = espn.gameForTeam(sleeper.playerTeam(pid) || pid);
+      if (!g) continue;
+      const rec = counts.get(g.id) || { mine: 0, opp: 0 };
+      rec[key] += 1;
+      counts.set(g.id, rec);
+    }
+  };
+  tally(s.myLineup, 'mine');
+  tally(s.oppLineup, 'opp');
+  return counts;
+}
+
+let counts = new Map();
+
 function row(g) {
   const live = g.state === 'in';
   const sel = state.filters.gameId === g.id;
@@ -63,7 +88,16 @@ function row(g) {
     foot = `<div class="g-foot"><span>${esc(g.detail || 'Final')}</span></div>`;
   }
 
-  btn.innerHTML = teamRow(g, g.away, as, hs, live) + teamRow(g, g.home, hs, as, live) + foot;
+  const c = counts.get(g.id);
+  const fantasy = c && (c.mine || c.opp)
+    ? `<span class="g-fan">
+         ${c.mine ? `<span class="g-fan-mine" title="${c.mine} of your starters">★ ${c.mine}</span>` : ''}
+         ${c.opp ? `<span class="g-fan-opp" title="${c.opp} opponent starters">◆ ${c.opp}</span>` : ''}
+       </span>`
+    : '';
+
+  btn.innerHTML = teamRow(g, g.away, as, hs, live) + teamRow(g, g.home, hs, as, live)
+    + foot.replace('</div>', `${fantasy}</div>`);
 
   const label = `${g.away.abbr} ${as}, ${g.home.abbr} ${hs}` +
     (live ? `, live, ${g.downDistance || ''}` : g.state === 'pre' ? ', not started' : ', final');
@@ -76,6 +110,7 @@ export function render() {
   if (!el) return;
 
   const games = sortedGames();
+  counts = starterCounts();
   el.replaceChildren();
 
   if (!games.length) {

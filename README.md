@@ -2,8 +2,8 @@
 
 A desktop version of Sleeper's SleeperZone: every play from every live NFL game
 in one feed, with your Sleeper starters flagged and your fantasy matchup running
-in the header — plus a live stats panel with league-wide leaders and a
-fantasy-scored box score for whichever game you click.
+in the header — plus a live stats panel with your lineup, league-wide leaders
+and a fantasy-scored box score for whichever game you click.
 
 Static site. No build step, no server, no API key, no dependencies. Push it to
 GitHub Pages and the browser talks to ESPN and Sleeper directly.
@@ -39,7 +39,7 @@ Then **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`
 | Source | Used for | Interval |
 |---|---|---|
 | `site.api.espn.com/.../scoreboard` | scores, clock, down/distance, red zone | 6 s |
-| `sports.core.api.espn.com/.../plays` | play-by-play text | 10 s per live game |
+| `sports.core.api.espn.com/.../plays` | play-by-play text | whole game once, then tail every 10 s |
 | `api.sleeper.app/v1/league/.../matchups` | live fantasy points | 25 s |
 | `site.api.espn.com/.../summary?event=` | box scores, scoring plays | 30 s per live game |
 | `site.api.espn.com/.../teams/{t}/roster` | player ID bridge | once a day |
@@ -97,11 +97,11 @@ js/espn.js      scoreboard, play tail paging, team rosters
 js/sleeper.js   league, rosters, live matchup, slim player cache
 js/bridge.js    ESPN athlete id  ->  Sleeper player id
 js/poller.js    interval scheduler with exponential backoff
-js/feed.js      cross-game merge, dedupe, filters, rendering
+js/feed.js      cross-game merge, dedupe, filters, player follow, rendering
 js/boxscore.js  slate-wide player stat table and leader ranking
 js/scoring.js   fantasy points from stat lines, under league settings
-js/panel.js     the stats panel: leaders board and per-game box score
-js/rail.js      the game rail
+js/panel.js     the stats panel: My Team, leaders board, per-game box score
+js/rail.js      the game rail, with per-game starter counts
 js/matchup.js   the header score strip
 js/alerts.js    WebAudio chimes, flash, desktop notifications
 js/main.js      boot and wiring
@@ -130,11 +130,13 @@ makes and attempts; most leagues, including this one, pay 3 points for a 25-yard
 kick and 5 for a 52-yard one. The first implementation read distances out of the
 play feed, where kicks read `N.Folk 31 yard field goal is GOOD` and carry a
 participant tagged `kicker`. That was wrong, and the validation check caught it:
-Evan McPherson scored 4 against Sleeper's 13. **The play feed is a rolling tail,
-not a complete log** — any kick made before the page loaded is simply not in it.
+Evan McPherson scored 4 against Sleeper's 13. The feed only held a rolling tail
+of each game, so any kick made before the page loaded was simply not in it.
 
-Distances now come from `summary.scoringPlays`, which covers the whole game and
-is already in the payload fetched for box scores. Its field-goal entries carry
+The feed now pulls each game whole (see [The day's plays](#the-days-plays)), but
+the fix stands on its own terms: distances come from `summary.scoringPlays`,
+which covers the whole game, arrives in a payload already being fetched for box
+scores, and does not depend on the play log being complete. Its field-goal entries carry
 no athlete ID, so the kicker is matched by name against the team's kicking rows.
 Misses need no distance at all, since `fgmiss` is flat: attempts minus makes is
 exact.
@@ -162,6 +164,55 @@ whistle, and none does.
 
 Where no league is connected the board falls back to full-PPR defaults, so it
 still shows something sensible.
+
+## The fantasy layer
+
+The app pulls a lot of fantasy data. For a long time it showed almost none of
+it: 173 league players' live points and both full lineups sat in memory behind
+two totals in the header.
+
+**My Team** is the panel's default tab once a league is connected. It lists your
+starters in Sleeper's own lineup order, each with live points and the state of
+the game they are in — `Q3 9:51`, `Final`, or a kickoff time — plus the count
+that matters most on a Sunday afternoon:
+
+```
+KEAGS POWDER PLAYBOOK                          75.2
+2 yet to play
+QB    Josh Allen        BUF @ MIN · 8:15 PM      0.0
+RB    Devin Singletary  NYG @ PHI · Q3 10:47     3.2
+WR    Ja'Marr Chase     CIN @ ATL · Final       31.5
+...
+```
+
+Your opponent's lineup is listed underneath, which is the half of the matchup
+the header never showed. Team defences resolve too: a Sleeper `DEF` slot is a
+team abbreviation rather than a player, so it is matched to a game directly.
+
+**Following a player** narrows the feed to one athlete across every game. Click
+any row — a lineup slot, a leaders entry, a box-score line — and the feed shows
+only their plays, matched on ESPN's `participants` rather than by searching the
+text. A chip names who is being followed and clears it; a filter that silently
+empties the feed with no visible cause is indistinguishable from a broken app.
+
+**The game rail carries fantasy markers**: `★ 2` for your starters in a game,
+`◆ 3` for your opponent's. The rail is the surface you scan to decide where to
+look, and without these it said nothing about your team.
+
+## The day's plays
+
+Each game's play log is pulled **whole once, then tailed**. The tail alone is a
+rolling window, so a game that kicked off before the page loaded contributed
+only its last few plays: scrolling back through the day found nothing, and
+anything derived from play text silently lost its history.
+
+Measured on the Week 9 slate: the tail-only feed held **260 plays**, the full
+pull holds **1,157**. Steady-state cost is unchanged — over 25 seconds of
+polling, 14 tail requests and zero full pulls, since a game is only ever pulled
+whole once. The one-time cost is about 37 KB gzipped per game.
+
+Finished games are pulled too, so the morning slate is still in the feed when
+you open the page in the evening.
 
 ## Design notes
 

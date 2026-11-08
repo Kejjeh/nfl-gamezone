@@ -99,6 +99,22 @@ export async function build(onProgress) {
 export const toSleeperId = (athleteId) =>
   state.bridge.athleteToSleeper.get(String(athleteId)) || null;
 
+// The reverse direction, built lazily and invalidated whenever the forward map
+// is rebuilt. Needed to go from a Sleeper roster slot to the ESPN athlete whose
+// plays and stat line we hold.
+let reverse = null;
+let reverseFor = null;
+
+export function toAthleteId(sleeperId) {
+  const fwd = state.bridge.athleteToSleeper;
+  if (reverse === null || reverseFor !== fwd) {
+    reverse = new Map();
+    for (const [aid, pid] of fwd) if (!reverse.has(pid)) reverse.set(pid, aid);
+    reverseFor = fwd;
+  }
+  return reverse.get(String(sleeperId)) || null;
+}
+
 // Team defenses are not athletes. Sleeper keys them by team abbreviation, so a
 // DEF starter is matched on the team involved in the play instead.
 export function defIdForTeam(abbr) {

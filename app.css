@@ -377,7 +377,10 @@ body.panel-closed #panel { display: none; }
   color: var(--fg-3);
   font-variant-numeric: tabular-nums;
 }
-.g-foot .dd { color: var(--fg-2); }
+.g-foot .dd {
+  color: var(--fg-2);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .g-live {
   width: 5px; height: 5px;
@@ -1008,3 +1011,104 @@ body.panel-closed #panel { display: none; }
   line-height: 1.45;
   color: var(--fg-2);
 }
+
+/* =============================================================================
+   My Team: your lineup, live. Rows answer three questions at a glance -
+   who is playing, what are they worth, and who has not kicked off yet.
+   ========================================================================== */
+
+.lu-block { margin-bottom: var(--s5); }
+
+.lu-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--s2); margin-bottom: 2px;
+}
+.lu-head h3 {
+  margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--fg-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lu-total { font-size: 16px; font-weight: 650; color: var(--fg); }
+
+.lu-sub {
+  font-size: 11px; color: var(--fg-3); margin-bottom: var(--s2);
+}
+
+.lu { list-style: none; margin: 0; padding: 0; }
+
+.lu-row {
+  display: grid;
+  grid-template-columns: 34px 3px 1fr auto;
+  align-items: center; gap: var(--s2);
+  padding: 7px var(--s2) 7px 0;
+  border-top: 1px solid var(--line);
+  border-radius: 6px;
+}
+.lu-row:first-child { border-top: 0; }
+.lu-row[data-follow] { cursor: pointer; }
+.lu-row[data-follow]:hover,
+.lu-row[data-follow]:focus-visible { background: var(--surface-2); outline: none; }
+.lu-row[data-follow]:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+
+.lu-slot {
+  font-size: 10px; font-weight: 650; letter-spacing: .04em;
+  color: var(--fg-3); text-align: center;
+}
+.lu-bar { width: 3px; height: 22px; border-radius: 2px; background: var(--team); }
+.lu-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.lu-name {
+  font-size: 13px; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lu-meta {
+  font-size: 11px; color: var(--fg-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lu-pts { font-size: 14px; font-weight: 600; color: var(--fg); }
+
+/* A player still to kick off is the one thing you cannot read off the feed,
+   so it gets the only colour in the list. */
+.lu--pre .lu-status { color: var(--accent); }
+.lu--pre .lu-pts    { color: var(--fg-3); }
+.lu--live .lu-status { color: var(--mine); }
+.lu--done .lu-status,
+.lu--bye  .lu-status { color: var(--fg-3); }
+.lu--bye  .lu-name   { color: var(--fg-2); }
+
+/* --- following one player --- */
+
+.follow-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 4px 4px 10px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  font-size: 12px; color: var(--fg);
+}
+.follow-chip[hidden] { display: none; }
+.fc-label { color: var(--fg-2); font-size: 11px; }
+.fc-name { font-weight: 600; }
+.fc-x {
+  all: unset; cursor: pointer; width: 18px; height: 18px;
+  display: grid; place-items: center; border-radius: 50%;
+  color: var(--fg-2); font-size: 15px; line-height: 1;
+}
+.fc-x:hover { background: rgba(255,255,255,.12); color: var(--fg); }
+.fc-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.ld-row[data-follow], .bx-table tbody tr[data-follow] { cursor: pointer; }
+.ld-row.following, .bx-table tbody tr.following {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ld-row:focus-visible, .bx-table tbody tr:focus-visible {
+  outline: none; box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* --- fantasy markers in the game rail --- */
+
+.g-fan {
+  margin-left: auto; padding-left: var(--s2);
+  display: inline-flex; gap: 6px; flex: 0 0 auto;
+  font-size: 10px; font-variant-numeric: tabular-nums;
+}
+.g-fan-mine { color: var(--mine); font-weight: 650; }
+.g-fan-opp  { color: var(--opp);  font-weight: 650; }

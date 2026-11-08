@@ -4,6 +4,9 @@ import { state, emit } from './state.js';
 import * as box from './boxscore.js';
 import * as espn from './espn.js';
 import * as scoring from './scoring.js';
+import * as sleeper from './sleeper.js';
+import * as bridge from './bridge.js';
+import * as feed from './feed.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -102,7 +105,10 @@ function renderGame(eventId) {
           <tbody>
             ${rows.map((r) => {
               const fp = fptsFor(r.id);
-              return `<tr>
+              const following = state.filters.athleteId === String(r.id);
+              return `<tr class="${following ? 'following' : ''}"
+                data-follow="${esc(r.id)}" data-follow-name="${esc(r.name)}"
+                tabindex="0" role="button">
                 <td class="nm" title="${esc(r.name)}">${esc(r.short || r.name)}</td>
                 ${view.cols.map(([, f]) => `<td class="num">${esc(f(r.stats))}</td>`).join('')}
                 <td class="fp num">${fp == null ? '—' : fp.toFixed(1)}</td>
@@ -126,6 +132,82 @@ function renderGame(eventId) {
   return html;
 }
 
+
+/* ---------- my team ---------- */
+
+// What a lineup row needs to answer: has this player played, are they playing
+// now, or have they not kicked off yet - and what are they worth so far.
+function lineupRow(pid, slot) {
+  const s = state.sleeper;
+  const name = sleeper.playerName(pid);
+  const pos = sleeper.playerPos(pid) || slot || '';
+  const nfl = sleeper.playerTeam(pid) || (/^[A-Z]{2,3}$/.test(pid) ? pid : '');
+  const pts = s.pointsByPlayer?.get(pid);
+  const game = espn.gameForTeam(nfl);
+
+  let status, cls;
+  if (!game) { status = 'Bye'; cls = 'bye'; }
+  else if (game.state === 'in') {
+    status = `Q${game.period || ''} ${game.clock || ''}`.trim();
+    cls = 'live';
+  } else if (game.state === 'pre') {
+    status = game.date
+      ? new Date(game.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : 'Upcoming';
+    cls = 'pre';
+  } else { status = 'Final'; cls = 'done'; }
+
+  const opp = game
+    ? (espn.sameTeam(game.home.abbr, nfl) ? `vs ${game.away.abbr}` : `@ ${game.home.abbr}`)
+    : '';
+
+  const aid = bridge.toAthleteId(pid);
+  const colour = espn.colorForAbbr(nfl) || 'var(--fg-3)';
+
+  return `<li class="lu-row lu--${cls}"${aid ? ` data-follow="${esc(aid)}" data-follow-name="${esc(name)}" tabindex="0" role="button"` : ''}>
+      <span class="lu-slot">${esc(slot || pos)}</span>
+      <span class="lu-bar" style="--team:${colour}"></span>
+      <span class="lu-main">
+        <span class="lu-name">${esc(name)}</span>
+        <span class="lu-meta">${esc(nfl)}${opp ? ' ' + esc(opp) : ''} · <span class="lu-status">${esc(status)}</span></span>
+      </span>
+      <span class="lu-pts num">${pts == null ? '—' : Number(pts).toFixed(1)}</span>
+    </li>`;
+}
+
+function yetToPlay(ids) {
+  return ids.filter((pid) => {
+    const g = espn.gameForTeam(sleeper.playerTeam(pid) || pid);
+    return g && g.state === 'pre';
+  }).length;
+}
+
+function lineupBlock(title, ids, slots, total) {
+  if (!ids.length) return '';
+  const left = yetToPlay(ids);
+  return `<section class="lu-block">
+      <div class="lu-head">
+        <h3>${esc(title)}</h3>
+        <span class="lu-total num">${total == null ? '—' : Number(total).toFixed(1)}</span>
+      </div>
+      <div class="lu-sub">${left ? `${left} yet to play` : 'all players under way or done'}</div>
+      <ol class="lu">${ids.map((pid, i) => lineupRow(pid, slots[i])).join('')}</ol>
+    </section>`;
+}
+
+function renderTeam() {
+  const s = state.sleeper;
+  if (!s.leagueId) {
+    return `<div class="panel-empty">Connect Sleeper to see your lineup here.</div>`;
+  }
+  if (!s.myLineup?.length) {
+    return `<div class="panel-empty">No lineup for week ${state.week ?? '?'}.</div>`;
+  }
+  const slots = s.slotLabels || [];
+  return lineupBlock(s.myName || 'Your lineup', s.myLineup, slots, s.myPoints)
+       + lineupBlock(s.oppName || 'Opponent', s.oppLineup, slots, s.oppPoints);
+}
+
 /* ---------- leaders ---------- */
 
 function renderLeaders() {
@@ -143,7 +225,10 @@ function renderLeaders() {
   } else {
     list = `<ol class="ld">` + rows.map(({ row, v }, i) => {
       const colour = espn.colorForAbbr(row.team) || 'var(--fg-3)';
-      return `<li class="ld-row">
+      const following = state.filters.athleteId === String(row.id);
+      return `<li class="ld-row${following ? ' following' : ''}"
+          data-follow="${esc(row.id)}" data-follow-name="${esc(row.name)}"
+          tabindex="0" role="button">
           <span class="ld-rank num">${i + 1}</span>
           <span class="ld-bar" style="--team:${colour}"></span>
           <span class="ld-main">
@@ -166,17 +251,27 @@ export function render() {
 
   const gameId = state.filters.gameId;
   const game = gameId ? state.games.get(gameId) : null;
-  // Selecting a game switches the panel to it; deselecting falls back.
-  const tab = game && state.panel.tab === 'game' ? 'game' : 'leaders';
+
+  // Selecting a game switches the panel to it; deselecting falls back. The
+  // team tab only exists once a league is connected.
+  const hasTeam = !!state.sleeper.leagueId;
+  let tab = state.panel.tab;
+  if (tab === 'game' && !game) tab = 'leaders';
+  if (tab === 'team' && !hasTeam) tab = 'leaders';
 
   const tabs = `
     <div class="panel-tabs" role="group" aria-label="Panel view">
+      ${hasTeam ? `<button type="button" data-tab="team" aria-pressed="${tab === 'team'}">My Team</button>` : ''}
       <button type="button" data-tab="leaders" aria-pressed="${tab === 'leaders'}">Leaders</button>
       ${game ? `<button type="button" data-tab="game" aria-pressed="${tab === 'game'}">${esc(game.away.abbr)} @ ${esc(game.home.abbr)}</button>` : ''}
     </div>`;
 
+  const body = tab === 'game' ? renderGame(gameId)
+             : tab === 'team' ? renderTeam()
+             : renderLeaders();
+
   el.innerHTML = `<div class="panel-head">${tabs}</div>
-    <div class="panel-body">${tab === 'game' ? renderGame(gameId) : renderLeaders()}</div>`;
+    <div class="panel-body">${body}</div>`;
 }
 
 export function wire() {
@@ -186,6 +281,7 @@ export function wire() {
     const tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
       state.panel.tab = tabBtn.dataset.tab;
+      state.panel.userPicked = true;
       render();
       return;
     }
@@ -194,7 +290,25 @@ export function wire() {
       state.panel.leaderCat = catBtn.dataset.leadercat;
       render();
       el.querySelector('.panel-body')?.scrollTo(0, 0);
+      return;
     }
+
+    const follow = e.target.closest('[data-follow]');
+    if (follow) {
+      feed.setFollow(follow.dataset.follow, follow.dataset.followName || '');
+      render();
+    }
+  });
+
+  // Lineup and leader rows are focusable, so they have to answer the keyboard
+  // the way the button they behave like would.
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const follow = e.target.closest('[data-follow]');
+    if (!follow) return;
+    e.preventDefault();
+    feed.setFollow(follow.dataset.follow, follow.dataset.followName || '');
+    render();
   });
 
   document.getElementById('btn-panel')?.addEventListener('click', () => {

@@ -106,8 +106,15 @@ export async function refreshMatchups(week) {
   s.oppRosterId = opp ? opp.roster_id : null;
   s.myPoints = mine.points ?? 0;
   s.oppPoints = opp ? (opp.points ?? 0) : null;
-  s.myStarters = new Set((mine.starters || []).filter(Boolean));
-  s.oppStarters = new Set(opp ? (opp.starters || []).filter(Boolean) : []);
+  s.myLineup = (mine.starters || []).filter(Boolean);
+  s.oppLineup = opp ? (opp.starters || []).filter(Boolean) : [];
+  s.myStarters = new Set(s.myLineup);
+  s.oppStarters = new Set(s.oppLineup);
+
+  // roster_positions lists every slot including the bench; the starters array
+  // lines up with the non-bench ones, in order, so this labels each row.
+  s.slotLabels = (s.league?.roster_positions || [])
+    .filter((x) => x !== 'BN' && x !== 'IR' && x !== 'TAXI');
 
   // Per-player live points for the badge subtitles. Taken from every roster in
   // the league, not just this matchup: it costs nothing (the payload is already

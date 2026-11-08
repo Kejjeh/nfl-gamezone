@@ -76,6 +76,7 @@ function passes(p) {
   if (DROP.test(p.type)) return false;
   const f = state.filters;
   if (f.gameId && p.eventId !== f.gameId) return false;
+  if (f.athleteId && !(p.athleteIds || []).includes(f.athleteId)) return false;
   if (!matchesTypes(p)) return false;
   switch (f.mode) {
     case 'scoring': return p.scoringPlay;
@@ -296,6 +297,46 @@ function showEmptyIfNeeded(list) {
   feed.append(d);
 }
 
+/* ---------- following one player ---------- */
+
+// Following narrows the feed to a single athlete across every game. It has to
+// announce itself: a filter that silently empties the feed with no visible
+// cause is indistinguishable from the app being broken.
+export function setFollow(athleteId, name) {
+  const id = athleteId == null ? null : String(athleteId);
+  const f = state.filters;
+  const same = f.athleteId === id;
+  f.athleteId = same ? null : id;
+  f.athleteName = same ? null : (name || '');
+  renderFollowChip();
+  const feedEl = document.getElementById('feed');
+  if (feedEl) feedEl.scrollTop = 0;
+  rebuild();
+  return f.athleteId;
+}
+
+export function clearFollow() {
+  state.filters.athleteId = null;
+  state.filters.athleteName = null;
+  renderFollowChip();
+  rebuild();
+}
+
+function renderFollowChip() {
+  const el = document.getElementById('follow-chip');
+  if (!el) return;
+  const f = state.filters;
+  if (!f.athleteId) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = `<span class="fc-label">Following</span>
+    <span class="fc-name">${escAttr(f.athleteName || 'player')}</span>
+    <button type="button" class="fc-x" id="follow-clear"
+      aria-label="Stop following ${escAttr(f.athleteName || 'player')}">&times;</button>`;
+}
+
+const escAttr = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 export function wire() {
   const bar = document.getElementById('filters');
   bar.addEventListener('click', (e) => {
@@ -311,11 +352,13 @@ export function wire() {
 
   // Play-type chips: multi-select, none selected means no type filter.
   const types = document.getElementById('type-filters');
-  types.innerHTML = Object.entries(PLAY_TYPES).map(([k, t]) =>
+  types.innerHTML = '<span class="follow-chip" id="follow-chip" hidden></span>'
+    + Object.entries(PLAY_TYPES).map(([k, t]) =>
     `<button type="button" class="chip" data-type="${k}" aria-pressed="false">${t.label}</button>`
   ).join('') + '<button type="button" class="chip chip-clear" id="type-clear" hidden>Clear</button>';
 
   types.addEventListener('click', (e) => {
+    if (e.target.closest('#follow-clear')) { clearFollow(); return; }
     const clear = e.target.closest('#type-clear');
     if (clear) {
       state.filters.types.clear();

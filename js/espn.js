@@ -1,6 +1,6 @@
 // ESPN data access. All endpoints are undocumented and carry no SLA, so every
 // field read here is treated as optional.
-import { ESPN_SITE, ESPN_CORE, SEASON, PLAYS_PAGE_SIZE, TTL } from './config.js';
+import { ESPN_SITE, ESPN_CORE, SEASON, PLAYS_PAGE_SIZE, TTL, TEAM_ALIASES } from './config.js';
 import { TEAMS } from './teams.js';
 import * as store from './store.js';
 import { state } from './state.js';
@@ -34,6 +34,23 @@ export function loadTeams() {
 export const teamAbbr = (id) => state.teamsById.get(String(id))?.abbr || null;
 
 export const teamColor = (id) => state.teamsById.get(String(id))?.accent || null;
+
+// Which game a team is in this week, or null on a bye. Sleeper and ESPN
+// disagree on a handful of abbreviations (WSH/WAS, JAX/JAC, LV/LVR), so the
+// alias table gets a second try before giving up.
+export function sameTeam(a, b) {
+  if (!a || !b) return false;
+  const x = String(a).toUpperCase(), y = String(b).toUpperCase();
+  return x === y || TEAM_ALIASES[x] === y || TEAM_ALIASES[y] === x;
+}
+
+export function gameForTeam(abbr) {
+  if (!abbr) return null;
+  for (const g of state.games.values()) {
+    if (sameTeam(g.home?.abbr, abbr) || sameTeam(g.away?.abbr, abbr)) return g;
+  }
+  return null;
+}
 
 export function colorForAbbr(abbr) {
   for (const t of state.teamsById.values()) if (t.abbr === abbr) return t.accent;
