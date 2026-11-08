@@ -8,7 +8,14 @@ import { state } from './state.js';
 import * as espn from './espn.js';
 import * as scoring from './scoring.js';
 
-const SKILL = ['passing', 'rushing', 'receiving', 'kicking', 'fumbles'];
+// Fantasy scoring only needs the first five. The rest are here for bet
+// markets - tackles, sacks and return yards are all commonly priced - and for
+// defensive scoring later. Aggregating them costs nothing: the box scores are
+// already fetched and in memory.
+const SKILL = [
+  'passing', 'rushing', 'receiving', 'kicking', 'fumbles',
+  'defensive', 'interceptions', 'kickReturns', 'puntReturns',
+];
 
 export async function refresh(eventIds) {
   for (const id of eventIds) {

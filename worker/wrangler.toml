@@ -1,0 +1,26 @@
+# Cloudflare Worker that polls ESPN and pushes bet alerts to the phone.
+#
+# Free plan is enough: cron triggers are included, the 100k requests/day limit
+# is far above a Sunday's traffic, and each run makes well under the 50
+# subrequests a free-plan invocation is allowed.
+
+name = "gamezone-push"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Every minute. WidgetKit-style throttling does not apply here - this is a
+# server, and a push arrives on the phone within seconds of being sent.
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# The site allowed to talk to this Worker. Set it to your Pages URL.
+ALLOWED_ORIGIN = "https://kejjeh.github.io"
+# Required by the VAPID spec so a push service can contact you.
+VAPID_SUBJECT = "mailto:you@example.com"
+
+# Subscriptions, their bets, and the last stat values seen.
+# Create with:  npx wrangler kv namespace create GZ
+[[kv_namespaces]]
+binding = "GZ"
+id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"

@@ -23,6 +23,10 @@ export const state = {
 
   bridge: { athleteToSleeper: new Map(), ready: false, unresolved: [] },
 
+  // Tracked bets, loaded from localStorage by bets.js. Legs hold an ESPN
+  // athlete id, so progress is a box-score lookup rather than text matching.
+  bets: [],
+
   boxscores: new Map(),     // eventId -> normalized box score
   playerStats: new Map(),   // espn athleteId -> aggregated line + fantasy points
 

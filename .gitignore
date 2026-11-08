@@ -2,3 +2,8 @@
 Thumbs.db
 *.log
 node_modules/
+
+# VAPID private key, written by tools/vapid-keygen.mjs. Never commit this.
+worker/.vapid-private.json
+worker/node_modules/
+worker/.wrangler/

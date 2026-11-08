@@ -972,6 +972,186 @@ body.panel-closed #panel { display: none; }
    that is not a desktop - which is how a phone held sideways (812x375)
    reads. An iPad portrait (768x1024) is neither, and keeps rail + feed.
    This query is mirrored in main.js; the two must stay identical. */
+/* ---------------- bets ---------------- */
+
+.bt-actions { display: flex; gap: var(--s2); margin-bottom: var(--s3); }
+.bt-actions button { flex: 1 1 auto; }
+
+.bt-note {
+  margin: var(--s3) 0 0;
+  color: var(--fg-3);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
+
+.bt-h {
+  margin: var(--s4) 0 var(--s2);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-3);
+}
+
+.bt-sum {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+.bt-sum div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bt-sum span { font-size: var(--t-xs); color: var(--fg-3); }
+.bt-sum b { font-size: var(--t-md); font-variant-numeric: tabular-nums; }
+.bt-sum .up { color: var(--mine); }
+.bt-sum .down { color: var(--rz); }
+
+/* One card per bet. The left edge carries the state, so a glance down the
+   column reads as a list of outcomes without any text being parsed. */
+.bt {
+  margin-bottom: var(--s2);
+  padding: var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-md);
+}
+.bt--won  { border-left-color: var(--mine); }
+.bt--lost { border-left-color: var(--rz); opacity: 0.68; }
+.bt--hit  { border-left-color: var(--mine); }
+.bt--open { border-left-color: var(--accent); }
+
+.bt header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--s2); margin-bottom: 2px;
+}
+.bt-meta { font-size: var(--t-xs); color: var(--fg-3); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-state {
+  flex: 0 0 auto; font-size: var(--t-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-2);
+}
+.bt--won .bt-state  { color: var(--mine); }
+.bt--lost .bt-state { color: var(--rz); }
+
+.bt-line { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.bt-paid { font-size: var(--t-sm); font-variant-numeric: tabular-nums; color: var(--fg); }
+.bt-legs { font-size: var(--t-xs); color: var(--fg-3); }
+.bt-del {
+  margin-left: auto; padding: 0 6px; min-height: 0; line-height: 1.2;
+  background: none; border: 0; color: var(--fg-3); font-size: var(--t-md); cursor: pointer;
+}
+.bt-del:hover { color: var(--rz); }
+
+.bt-leglist { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+
+/* Each leg is a 3-column grid: mark, description, number - with the bar and
+   the detail line spanning underneath. */
+.bt-leg {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-areas: "mark desc prog" ".  bar  bar" ".  detail detail";
+  align-items: center;
+  gap: 2px var(--s2);
+  padding: 5px var(--s2);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+.bt-leg[tabindex] { cursor: pointer; }
+.bt-leg[tabindex]:hover { background: var(--surface-3); }
+.bt-leg[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.bt-mark   { grid-area: mark; font-size: var(--t-xs); color: var(--fg-3); text-align: center; }
+.bt-desc   { grid-area: desc; font-size: var(--t-sm); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-prog   { grid-area: prog; font-size: var(--t-sm); font-variant-numeric: tabular-nums;
+  color: var(--fg); white-space: nowrap; }
+.bt-detail { grid-area: detail; font-size: var(--t-xs); color: var(--fg-3); }
+
+.bt-leg--won .bt-mark, .bt-leg--hit .bt-mark { color: var(--mine); }
+.bt-leg--won .bt-prog, .bt-leg--hit .bt-prog { color: var(--mine); }
+.bt-leg--lost .bt-mark, .bt-leg--lost .bt-prog { color: var(--rz); }
+.bt-leg--pend, .bt-leg--unk { opacity: 0.6; }
+
+.bt-bar {
+  grid-area: bar; height: 3px; margin: 2px 0 1px;
+  background: var(--line-strong); border-radius: 2px; overflow: hidden;
+}
+.bt-bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 240ms var(--ease); }
+.bt-leg--won .bt-bar i, .bt-leg--hit .bt-bar i { background: var(--mine); }
+.bt-leg--lost .bt-bar i { background: var(--rz); }
+
+.bt-warn {
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(255, 92, 92, 0.15); color: var(--rz); font-size: var(--t-xs);
+}
+.bt-warnlist {
+  margin: var(--s3) 0 0; padding: var(--s2) var(--s3) var(--s2) var(--s5);
+  background: rgba(255, 176, 46, 0.08); border-radius: var(--r-sm);
+  color: var(--score); font-size: var(--t-xs); line-height: 1.6;
+}
+
+/* Tab count badge */
+.panel-tabs i {
+  font-style: normal; font-size: var(--t-xs);
+  padding: 0 4px; margin-left: 3px; border-radius: 4px;
+  background: var(--line-strong); color: var(--fg-2);
+}
+
+/* ---- the entry dialog ---- */
+
+.card--wide { max-width: 520px; }
+
+.card textarea {
+  width: 100%; padding: var(--s2) var(--s3);
+  background: var(--surface-2); color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  font: inherit; font-size: var(--t-sm); line-height: 1.5;
+  resize: vertical;
+}
+.card textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.bl-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: var(--s4) 0 var(--s2);
+  font-size: var(--t-xs); text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--fg-3);
+}
+.bl-head button { min-height: 28px; font-size: var(--t-xs); }
+
+.bl {
+  padding: var(--s2);
+  margin-bottom: var(--s2);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+.bl-row { display: flex; gap: var(--s2); align-items: center; margin-top: var(--s2); }
+.bl-row:first-child { margin-top: 0; }
+.bl-row--line { flex-wrap: wrap; }
+.bl-row--money { gap: var(--s3); margin-top: var(--s4); }
+.bl-row--money label { flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; }
+
+.bl select, .bl input[type="text"], .bl-row--money input {
+  flex: 1 1 auto; min-width: 0; padding: 6px var(--s2);
+  background: var(--surface-3); color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  font: inherit; font-size: var(--t-sm);
+}
+.bl input[type="text"][data-f="line"] { flex: 0 0 72px; }
+.bl select[data-f="side"] { flex: 0 0 84px; }
+
+.bl-chk { display: flex; align-items: center; gap: 5px; flex: 0 0 auto;
+  font-size: var(--t-xs); color: var(--fg-2); }
+.bl-chk input { width: 14px; height: 14px; }
+
+.bl-del {
+  flex: 0 0 auto; padding: 0 8px; min-height: 0;
+  background: none; border: 0; color: var(--fg-3);
+  font-size: var(--t-md); cursor: pointer;
+}
+.bl-del:hover { color: var(--rz); }
+
 @media (max-width: 700px), (max-height: 500px) and (max-width: 900px) {
   /* One pane, full width. The desktop rules for .panel-closed carry higher
      specificity than a bare `main`, so they have to be answered directly or

@@ -12,6 +12,16 @@
 <link rel="preconnect" href="https://sports.core.api.espn.com" crossorigin>
 <link rel="preconnect" href="https://api.sleeper.app" crossorigin>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🏈</text></svg>">
+
+<!-- Home Screen web app. iOS only delivers web push to an installed web app,
+     never to a Safari tab, and installing needs a manifest with a standalone
+     display mode plus an apple-touch-icon. -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GameZone">
 </head>
 <body>
 
@@ -158,6 +168,20 @@
     </div>
     <div class="t-msg" id="notify-msg" role="status" hidden></div>
 
+    <div class="toggle">
+      <div>
+        <div class="t-name">Phone alerts</div>
+        <div class="t-desc">
+          Bet legs hitting and busting, pushed to your phone even when the app
+          is closed. Needs the app on your Home Screen and the sender in
+          <code>worker/</code> deployed.
+        </div>
+      </div>
+      <button type="button" class="switch" id="push-toggle"
+              aria-pressed="false" aria-label="Phone alerts"></button>
+    </div>
+    <div class="t-msg" id="push-msg" role="status" hidden></div>
+
     <label>Sleeper</label>
     <div id="set-sleeper" class="diag"></div>
 
@@ -175,6 +199,11 @@
       match your Sleeper app exactly.
     </p>
   </div>
+</div>
+
+<!-- Bet entry. The card is filled in by js/bets-ui.js. -->
+<div class="overlay" id="betdlg" hidden role="dialog" aria-modal="true" aria-labelledby="bt-title">
+  <div class="card card--wide"></div>
 </div>
 
 <script type="module" src="js/main.js"></script>

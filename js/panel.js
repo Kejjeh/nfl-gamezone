@@ -7,6 +7,8 @@ import * as scoring from './scoring.js';
 import * as sleeper from './sleeper.js';
 import * as bridge from './bridge.js';
 import * as feed from './feed.js';
+import * as betsUI from './bets-ui.js';
+import * as bets from './bets.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -263,11 +265,13 @@ export function render() {
     <div class="panel-tabs" role="group" aria-label="Panel view">
       ${hasTeam ? `<button type="button" data-tab="team" aria-pressed="${tab === 'team'}">My Team</button>` : ''}
       <button type="button" data-tab="leaders" aria-pressed="${tab === 'leaders'}">Leaders</button>
+      <button type="button" data-tab="bets" aria-pressed="${tab === 'bets'}">Bets${state.bets.length ? ` <i>${state.bets.length}</i>` : ''}</button>
       ${game ? `<button type="button" data-tab="game" aria-pressed="${tab === 'game'}">${esc(game.away.abbr)} @ ${esc(game.home.abbr)}</button>` : ''}
     </div>`;
 
   const body = tab === 'game' ? renderGame(gameId)
              : tab === 'team' ? renderTeam()
+             : tab === 'bets' ? betsUI.render()
              : renderLeaders();
 
   el.innerHTML = `<div class="panel-head">${tabs}</div>
@@ -290,6 +294,23 @@ export function wire() {
       state.panel.leaderCat = catBtn.dataset.leadercat;
       render();
       el.querySelector('.panel-body')?.scrollTo(0, 0);
+      return;
+    }
+
+    if (e.target.closest('#bt-add')) { betsUI.openDialog(); return; }
+
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      bets.remove(del.dataset.del);
+      render();
+      return;
+    }
+
+    if (e.target.closest('#bt-clear-settled')) {
+      for (const { bet, status } of bets.allStatuses()) {
+        if (['won', 'lost', 'push'].includes(status.state)) bets.remove(bet.id);
+      }
+      render();
       return;
     }
 

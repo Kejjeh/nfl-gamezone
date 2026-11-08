@@ -1,0 +1,9 @@
+{
+  "name": "nfl-gamezone",
+  "private": true,
+  "type": "module",
+  "description": "Static site; this file exists so Node can load js/*.js as ES modules for the test harnesses in tools/. The browser and GitHub Pages ignore it.",
+  "scripts": {
+    "test": "node tools/bets-test.mjs && node tools/worker-test.mjs"
+  }
+}

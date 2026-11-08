@@ -256,6 +256,108 @@ back, `-webkit-text-size-adjust` so landscape does not inflate type, 38px
 minimum on anything tappable, and dialogs that fill the screen instead of
 floating in it.
 
+## Bets
+
+A bet tracker that reads the same box scores the leaders board does, so a leg
+is scored off the actual stat line rather than off text in the feed. Paste a
+slip, or type one in; each leg shows what it needs and how close it is.
+
+```
+2-leg parlay · FanDuel · +310                       ALL HIT
+$20.00 → $82.00   2/2 legs
+  ✓ CeeDee Lamb over 120.5 receiving yards   195 / 120.5 yds
+  ✓ Chris Olave 5+ receptions                      6 / 5 rec
+```
+
+### Syncing from FanDuel and DraftKings is not possible
+
+Neither book exposes a user's bets. There is no public API, no developer
+programme, and no OAuth for account data — what the odds vendors sell is lines,
+not anybody's bet history. The only route to a real sync would be driving the
+books' internal endpoints with your login, which means handling sportsbook
+credentials and breaking their terms, so this does not do that.
+
+What it does instead is read a **pasted slip**. No credentials, nothing to
+breach, and once the parser knows the shape it is about as quick. Every parsed
+leg is shown for review before anything is saved, and anything it could not
+read is listed rather than silently dropped.
+
+The parser handles what both books write: `Over 39.5 Receiving Yards`, the
+`40+` alt-line form, `Anytime Touchdown Scorer`, combined markets like
+`Rushing + Receiving Yards`, `Tackles + Assists`, totals, and a bare
+`Bengals -3.5`. Clipboard formats differ by app version, so if a slip of yours
+does not parse, the fix is to paste it into an issue — the patterns live in one
+table in `bets-core.js`.
+
+### What it can track
+
+Everything ESPN's box score carries, which is more than it sounds:
+
+| | |
+|---|---|
+| Passing | yards, TDs, completions, attempts, interceptions, sacks taken |
+| Rushing | yards, carries, TDs, longest rush |
+| Receiving | yards, receptions, TDs, longest reception, targets |
+| Combined | rush + rec yards, pass + rush yards |
+| Scoring | anytime touchdown |
+| Defence | tackles, solo tackles, sacks, TFL, passes defended, interceptions |
+| Kicking | kicking points, field goals made, longest field goal |
+| Returns | return yards |
+| Game | spread, moneyline, game total, team total |
+
+Two details that are easy to get wrong and are tested:
+
+- **`40+` and `over 39.5` are not the same comparison.** The first means *at
+  least* 40, the second means *more than* 39.5. They agree on integers and
+  disagree on a whole-number line, so which one was meant is stored per leg.
+- **An over can settle live; an under cannot.** Yards only go up, so clearing
+  the line is decisive the moment it happens, while staying under is only known
+  at the whistle. An under that has already been passed is marked dead rather
+  than "at risk" — it is not coming back.
+
+A parlay is alive only while every leg is, which is the whole reason to track
+one: a dead leg kills it however well the rest are doing.
+
+### Alerts
+
+Bet alerts ride the box-score poll, since that is where the numbers move. A leg
+hitting or busting chimes and notifies; a leg crossing 90% of its line notifies
+once, not on every carry. A six-leg parlay ticking at once is one buzz, not six.
+
+Adding a bet mid-game never announces the yards that player already had — the
+baseline is taken when the bet appears, not from zero.
+
+## Phone alerts, and what iOS actually allows
+
+The app is installable: `manifest.json`, a service worker, and an
+`apple-touch-icon`, so Share → Add to Home Screen gives a real icon and a
+full-screen app with an offline shell.
+
+Notifications are the harder half, and the constraint is worth stating plainly:
+
+- iOS delivers web push **only to a Home Screen web app**, from iOS 16.4. A
+  Safari tab gets nothing.
+- Web Push is **server-initiated by definition** — something must hold a VAPID
+  private key and send to `*.push.apple.com`. A static host cannot.
+- iOS supports **neither Background Sync nor Periodic Background Sync**, so an
+  installed web app cannot wake itself to check either.
+
+So GitHub Pages alone can never push. `worker/` is the answer: a Cloudflare
+Worker on a one-minute cron that polls ESPN, evaluates bets with the same
+`bets-core.js`, and sends. Free plan, about 16 subrequests a run against a
+ceiling of 50. Setup is in [`worker/README.md`](worker/README.md). Until it is
+deployed, the toggle stays off and says why rather than pretending.
+
+The push carries **no payload**: encrypting one needs ECDH, HKDF and AES-GCM in
+the sender, and gets silently dropped when wrong. An empty push needs only the
+VAPID signature, and `sw.js` fetches the message. The signature is generated and
+verified against its own public key in `tools/worker-test.mjs`.
+
+The service worker is **network-first for same-origin**. A cache-first shell
+would load faster, but this project lost time twice to a browser serving a stale
+ES module while the file on disk was correct, so the cache is a fallback for
+being offline rather than a shortcut when online.
+
 ## The iPhone lock screen
 
 `ios/gamezone-widget.js` is a [Scriptable](https://scriptable.app) script that
@@ -363,6 +465,22 @@ new plays are announced without stealing focus.
 
 ## Privacy
 
-Your Sleeper username and settings live in this browser's `localStorage` and are
-never committed or transmitted anywhere except to Sleeper's own public API.
-Nothing is stored server-side because there is no server.
+Your Sleeper username, your settings and your bets live in this browser's
+`localStorage`. They are never committed, and nothing goes anywhere except
+Sleeper's and ESPN's own public APIs.
+
+Two things to know if you switch on phone alerts:
+
+- Turning them on sends your **bets** and your push subscription to the Worker
+  you deployed, because it has to evaluate them to know when to buzz. That is
+  your own Cloudflare account, not a third party, and it holds nothing else —
+  no Sleeper account, no league, no play history.
+- Everything else stays local. With phone alerts off, nothing leaves the
+  browser at all.
+
+Your sportsbook credentials are never involved, because nothing here logs in to
+a sportsbook. Pasted slips are parsed in the browser.
+
+The VAPID private key is written to a gitignored file by the key generator,
+goes straight into a Cloudflare secret, and is never printed or committed. Only
+the public key is in the repository, which is what it is for.

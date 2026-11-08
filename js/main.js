@@ -11,6 +11,9 @@ import * as matchup from './matchup.js';
 import * as alerts from './alerts.js';
 import * as boxscore from './boxscore.js';
 import * as panel from './panel.js';
+import * as bets from './bets.js';
+import * as betsUI from './bets-ui.js';
+import * as push from './push.js';
 import { createPoller } from './poller.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -146,7 +149,34 @@ async function pollBoxscores() {
 
   await boxscore.refresh(targets);
   panel.render();
+  announceBets();
 }
+
+// Bets move when the box score does, so this is the only place that needs to
+// look. Alerts stay suppressed until the backlog has been ingested, otherwise
+// opening the page mid-afternoon replays every leg that already hit.
+function announceBets() {
+  const events = bets.pollAlerts();
+  if (!state.primed || !events.length) return;
+
+  // Loudest first, and only one notification per poll - a parlay whose six
+  // legs all tick at once should be one buzz, not six.
+  events.sort((a, b) => b.priority - a.priority);
+  const top = events[0];
+
+  if (top.priority >= 1) {
+    if (state.settings.sound) {
+      if (top.kind === 'hit') alerts.chimeTD();
+      else if (top.kind === 'bust') alerts.chimeRedZone();
+      else alerts.chimeMine();
+    }
+    const more = events.length > 1 ? ` (+${events.length - 1} more)` : '';
+    alerts.notify(bets.eventTitle(top), bets.describeEvent(top) + more);
+  }
+
+  for (const ev of events) console.log('[bets]', bets.describeEvent(ev));
+}
+
 
 const pollers = {
   scoreboard: createPoller('scoreboard', pollScoreboard, () => pace('scoreboard')),
@@ -425,7 +455,58 @@ function wireMobile() {
   window.addEventListener('orientationchange', relayout);
 }
 
+// Registering the service worker is what makes the app installable; it is
+// worth doing whether or not push is ever switched on, because it is also what
+// gives the app an offline shell.
+async function initPush() {
+  if (!window.isSecureContext) return;          // file:// has no service worker
+  await push.registerWorker();
+  await push.loadConfig();
+  await paintPush();
+  push.syncBets();
+}
+
+async function paintPush() {
+  const btn = document.getElementById('push-toggle');
+  const msg = document.getElementById('push-msg');
+  if (!btn || !msg) return;
+
+  const st = await push.status();
+  btn.setAttribute('aria-pressed', String(st.subscribed));
+  btn.disabled = !st.supported || !st.configured;
+
+  let text = '';
+  if (!st.supported) text = 'This browser has no push support.';
+  else if (!st.configured) {
+    text = 'Not set up. Deploy the sender in worker/ and put its address in '
+      + 'push-config.json. Until then, alerts only fire while this is open.';
+  } else if (st.needsInstall) {
+    text = 'On iPhone: Share → Add to Home Screen first. iOS will not '
+      + 'deliver push to a Safari tab.';
+  } else if (st.permission === 'denied') {
+    text = 'Notifications are blocked for this site in your browser settings.';
+  } else if (st.subscribed) text = 'On. Your phone will buzz when a leg hits or busts.';
+
+  msg.textContent = text;
+  msg.hidden = !text;
+}
+
 function wireSettings() {
+  document.getElementById('push-toggle')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const on = btn.getAttribute('aria-pressed') === 'true';
+    btn.disabled = true;
+    try {
+      if (on) await push.disable();
+      else await push.enable();
+    } catch (err) {
+      const msg = document.getElementById('push-msg');
+      if (msg) { msg.textContent = String(err.message || err); msg.hidden = false; }
+    }
+    btn.disabled = false;
+    paintPush();
+  });
+
   $('#btn-settings').addEventListener('click', () => {
     renderToggles();
     renderSleeperInfo();
@@ -520,6 +601,8 @@ async function boot() {
   });
 
   espn.loadTeams();
+  bets.load();
+  betsUI.wire(() => { panel.render(); push.syncBets(); });
   panel.wire();
   wireMobile();
   // Three columns need room; between the phone breakpoint and that, the panel
@@ -539,6 +622,16 @@ async function boot() {
     console.error('[boot] initial load failed', err);
   }
   feed.rebuild();
+
+  // Prime the bet baseline from the first box-score pull, so a leg that was
+  // already at 26 yards when the page opened does not announce itself as a
+  // 26-yard gain.
+  try {
+    await pollBoxscores();
+  } catch (err) {
+    console.warn('[boot] first box score pull failed', err);
+  }
+  bets.resetAlertBaseline();
   state.primed = true;
 
   pollers.scoreboard.start();
@@ -548,9 +641,11 @@ async function boot() {
 
   initSleeper();
   initBridge();
+  initPush();
 
   // console access, and the hook the layout is checked through
-  window.gz = { state, pollers, feed, bridge, espn, sleeper, applyLayout, setMobileView };
+  window.gz = { state, pollers, feed, bridge, espn, sleeper, bets, betsUI,
+    applyLayout, setMobileView };
 }
 
 boot();
