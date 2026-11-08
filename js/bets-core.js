@@ -476,12 +476,16 @@ export function describeLeg(leg) {
 
 /* --------------------------------------------------------- slip parsing */
 
+// Both books write yards as "Yards" or "YDS", so every yardage pattern takes
+// either. Learned from real slips, not guessed.
+const YD = '(?:y(?:ar)?ds?)';
+
 // Market phrases, most specific first: "rushing + receiving yards" has to be
 // tested before "receiving yards", and "tackles for loss" before "tackles".
 const MARKET_PATTERNS = [
-  [/rush(?:ing)?\s*(?:\+|&|and)\s*rec(?:eiving)?\s*yards?/i, 'rush_rec_yds'],
-  [/pass(?:ing)?\s*(?:\+|&|and)\s*rush(?:ing)?\s*yards?/i, 'pass_rush_yds'],
-  [/(?:any\s*time|anytime)\s*(?:touchdown|td)|td\s*scorer|touchdown\s*scorer|to\s*score\s*a?\s*touchdown/i, 'anytime_td'],
+  [new RegExp(`rush(?:ing)?\\s*(?:\\+|&|and)\\s*rec(?:eiving)?\\s*${YD}`, 'i'), 'rush_rec_yds'],
+  [new RegExp(`pass(?:ing)?\\s*(?:\\+|&|and)\\s*rush(?:ing)?\\s*${YD}`, 'i'), 'pass_rush_yds'],
+  [/(?:any\s*time|anytime)\s*(?:touchdown|td)|(?:td|touchdown)\s*scorer|to\s*score\s*a?\s*touchdown/i, 'anytime_td'],
   [/longest\s*reception/i, 'rec_long'],
   [/longest\s*rush/i, 'rush_long'],
   [/longest\s*field\s*goal/i, 'fg_long'],
@@ -489,10 +493,10 @@ const MARKET_PATTERNS = [
   [/passes?\s*defended/i, 'pass_def'],
   [/kicking\s*points?/i, 'kick_pts'],
   [/field\s*goals?\s*made/i, 'fg_made'],
-  [/rec(?:eiving)?\s*yards?/i, 'rec_yds'],
-  [/rush(?:ing)?\s*yards?/i, 'rush_yds'],
-  [/pass(?:ing)?\s*yards?/i, 'pass_yds'],
-  [/return\s*yards?/i, 'return_yds'],
+  [new RegExp(`rec(?:eiving)?\\s*${YD}`, 'i'), 'rec_yds'],
+  [new RegExp(`rush(?:ing)?\\s*${YD}`, 'i'), 'rush_yds'],
+  [new RegExp(`pass(?:ing)?\\s*${YD}`, 'i'), 'pass_yds'],
+  [new RegExp(`return\\s*${YD}`, 'i'), 'return_yds'],
   [/pass(?:ing)?\s*(?:touchdowns?|tds?)/i, 'pass_tds'],
   [/rush(?:ing)?\s*(?:touchdowns?|tds?)/i, 'rush_tds'],
   [/rec(?:eiving)?\s*(?:touchdowns?|tds?)/i, 'rec_tds'],
@@ -508,7 +512,46 @@ const MARKET_PATTERNS = [
   [/spread|handicap|point\s*spread/i, 'spread'],
 ];
 
-const NOISE = /^(?:cash\s*out|bet\s*slip|same\s*game\s*parlay|parlay|single|straight|open|settled|today|tomorrow|live|final|boost|profit\s*boost|\d+\s*leg|share|copy)$/i;
+// "1st Touchdown Scorer" is NOT "Anytime Touchdown Scorer". Settling one as
+// the other turns a losing bet into a winner on screen, so it is refused out
+// loud rather than approximated. Checked before any market match.
+const FIRST_TD = /\b(?:1st|first)\s*(?:touchdown|td)\s*scorer/i;
+
+// Whole lines carrying no bet information. Every one of these was observed in
+// a real DraftKings or FanDuel page, not imagined.
+const NOISE = new RegExp('^(?:cash\\s*out(?:\\s*unavailable)?|bet\\s*slip|betslip\\s*empty'
+  + '|same\\s*game\\s*parlay|parlay|single|straight|open|settled|today|tomorrow|live|final'
+  + '|finished|boost|profit\\s*boost|\\+?\\d+%\\s*(?:parlay\\s*)?boost'
+  + '|\\d+\\s*(?:leg|pick)s?(?:\\s*sgp)?|sgpx?|share|copy|reuse|verify|hide\\s*picks'
+  + '|box\\s*score|play-?by-?play|go\\s*to\\s*event|total\\s*wager|total\\s*payout'
+  + '|to\\s*pay|wager|payout|returned?|won|bet\\s*id:.*|placed:.*|q1\\s*q2\\s*q3\\s*q4'
+  + '|\\d+(?:st|nd|rd|th)\\s*(?:&|and)\\s*\\d+.*'
+  + '|\\d{2}:\\d{2}\\s*\\d*(?:st|nd|rd|th)?\\s*quarter.*)$', 'i');
+
+// A leading word decorating the market rather than naming anything.
+const LEAD_NOISE = /^(?:live|alt|alternate|boosted)\s+/i;
+
+// Money as a label and an amount on one line, either order:
+// "Wager: $10.00 To Pay: $290.40", "TOTAL WAGER $25.00".
+const MONEY_PAIR = /(wager|stake|risk|to\s*pay|payout|to\s*win|total\s*return|returned?|won|collect)\s*:?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/gi;
+const PAYOUT_WORD = /pay|win|return|won|collect/i;
+
+// A bet-level price, alone or after a label: "+3958", "Same Game Parlay +104",
+// "PARLAY +2156 +2804" (the second is the boosted price actually paid).
+const PRICE_LINE = /^(?:(?:same\s*game\s*parlay|parlay|sgpx?|single|straight|total\s*odds|odds|\d+\s*(?:pick|leg)s?(?:\s*sgp)?)\s*[™®]?\s*)?((?:[+-]\d{3,5}\s*)+)$/i;
+
+// "40+", "250+ Yards", "Ja'Marr Chase 50+ Yards" - a threshold, optionally
+// carrying the player's name. DraftKings puts this on the line BEFORE the
+// market; FanDuel does too, with the name attached.
+const PLUS_LINE = /^(.*?)\b(\d+(?:\.\d+)?)\s*\+\s*(?:yards?|yds?|points?|pts?|receptions?|tackles?)?\s*$/i;
+
+const NAME_SHAPE = /^[A-Za-z][A-Za-z.'’‐-― ]{2,40}$/;
+
+function looksLikeName(s) {
+  if (!NAME_SHAPE.test(s)) return false;
+  const words = s.trim().split(/\s+/);
+  return words.length >= 2 && words.length <= 4;
+}
 
 // "Bengals -3.5", "CIN +6.5 -110", "Bengals -140".
 //
@@ -518,7 +561,7 @@ function bareTeamLeg(line, resolveTeam) {
   const m = /^([A-Za-z .'&]+?)\s*([+-]\d+(?:\.\d+)?)(?:\s+([+-]\d{3,5}))?\s*$/.exec(line.trim());
   if (!m) return null;
   const abbr = resolveTeam(m[1]);
-  if (!abbr) return null;
+  if (!abbr || typeof abbr !== 'string') return null;
 
   const first = Number(m[2]);
   const second = m[3] ? Number(m[3]) : 0;
@@ -539,6 +582,15 @@ function matchMarket(line) {
   return null;
 }
 
+// A parlay's summary line lists every leg, comma separated. Split it only when
+// it really is a list of legs, so an ordinary name with a comma survives.
+function splitSummary(line) {
+  if (!line.includes(',')) return [line];
+  const parts = line.split(/\s*,\s*/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return [line];
+  return parts.filter((p) => matchMarket(p)).length >= 2 ? parts : [line];
+}
+
 // Parse a pasted bet slip. Deliberately tolerant and deliberately not trusted:
 // the caller shows every leg for review before anything is saved. The exact
 // clipboard format differs by book and by app version, and guessing wrong
@@ -547,10 +599,14 @@ export function parseSlip(text, resolvers = {}) {
   const resolvePlayer = resolvers.player
     || (() => ({ athleteId: null, candidates: [], reason: 'no resolver' }));
   const resolveTeam = resolvers.team || (() => null);
-  const lines = String(text || '')
+
+  const raw = String(text || '')
     .split(/\r?\n/)
-    .map((s) => s.replace(/ /g, ' ').trim())
-    .filter((s) => s && !NOISE.test(s));
+    .map((s) => s.replace(/ /g, ' ').replace(/\s{2,}/g, ' ').trim())
+    .filter(Boolean);
+
+  const lines = [];
+  for (const l of raw) for (const p of splitSummary(l)) lines.push(p);
 
   const warnings = [];
   const legs = [];
@@ -559,66 +615,144 @@ export function parseSlip(text, resolvers = {}) {
   let toWin = 0;
   let teamHint = null;
 
-  const book = /fanduel/i.test(text) ? 'fanduel'
-    : /draft\s*kings|draftkings/i.test(text) ? 'draftkings'
+  // Carried between lines, because both books split one leg across two.
+  let pendingValue = null;
+  let pendingName = null;
+  let pendingMoney = 0;
+
+  const book = /fanduel|us-[a-z]{2}:|total\s*wager/i.test(text) ? 'fanduel'
+    : /draft\s*kings|draftkings|to\s*pay:|\bDK\d{6,}/i.test(text) ? 'draftkings'
     : 'manual';
 
-  for (const line of lines) {
-    // Money and price lines.
-    const money = /\$\s*([\d,]+(?:\.\d{1,2})?)/.exec(line);
-    if (money) {
-      const amt = Number(money[1].replace(/,/g, ''));
-      if (/to\s*(?:win|return|collect)|payout|total\s*return/i.test(line)) { toWin = amt; continue; }
-      if (/wager|stake|bet|risk/i.test(line) || !stake) { stake = amt; continue; }
+  for (const original of lines) {
+    const line = original.replace(LEAD_NOISE, '').trim();
+    if (!line) continue;
+
+    // --- money, labelled inline ------------------------------------------
+    MONEY_PAIR.lastIndex = 0;
+    let pair;
+    let tookMoney = false;
+    while ((pair = MONEY_PAIR.exec(line))) {
+      const amt = Number(pair[2].replace(/,/g, ''));
+      if (PAYOUT_WORD.test(pair[1])) toWin = amt; else stake = amt;
+      tookMoney = true;
+    }
+    if (tookMoney) { pendingMoney = 0; continue; }
+
+    // --- money, amount on one line and its label on the next -------------
+    const lone = /^\$\s*([\d,]+(?:\.\d{1,2})?)$/.exec(line);
+    if (lone) {
+      if (pendingMoney && !stake) stake = pendingMoney;
+      pendingMoney = Number(lone[1].replace(/,/g, ''));
+      continue;
+    }
+    if (pendingMoney) {
+      if (/payout|to\s*pay|return|won|collect|to\s*win/i.test(line)) {
+        toWin = pendingMoney; pendingMoney = 0; continue;
+      }
+      if (/wager|stake|risk/i.test(line)) { stake = pendingMoney; pendingMoney = 0; continue; }
+      if (!stake) stake = pendingMoney;
+      pendingMoney = 0;
     }
 
-    // A bare price on its own line belongs to the bet, not a leg.
-    const bare = /^([+-]\d{3,5})$/.exec(line);
-    if (bare) { odds = Number(bare[1]); continue; }
-
-    // "CIN @ BAL" or "Bengals vs Ravens" - context, and a hint for the names
-    // that follow it.
-    const matchup = /^([A-Za-z .']+?)\s*(?:@|vs\.?|at)\s*([A-Za-z .']+)$/i.exec(line);
-    if (matchup && !matchMarket(line)) {
-      teamHint = resolveTeam(matchup[1]) || resolveTeam(matchup[2]) || teamHint;
+    // --- a bet-level price -----------------------------------------------
+    const price = PRICE_LINE.exec(line);
+    if (price) {
+      const all = price[1].trim().split(/\s+/).map(Number).filter(Boolean);
+      // Where a book prints the original and the boosted price, the boosted
+      // one is what actually pays.
+      if (all.length) odds = all[all.length - 1];
       continue;
     }
 
-    const leg = parseLeg(line, teamHint, resolvePlayer, resolveTeam);
+    if (FIRST_TD.test(line)) {
+      warnings.push(`"${original}" is a first-touchdown bet, which this cannot `
+        + 'settle. Add it by hand, or leave it off.');
+      continue;
+    }
+
+    if (NOISE.test(line)) continue;
+
+    // --- "CIN @ BAL" - context, and a hint for the names that follow -----
+    // "@" may be written tight; "at" and "vs" must be surrounded by spaces,
+    // or the AT inside JONATHAN makes the name look like a fixture.
+    const matchup = /^([A-Za-z .']+?)(?:\s*@\s*|\s+(?:vs\.?|at)\s+)([A-Za-z .']+)$/i.exec(line);
+    if (matchup && !matchMarket(line)) {
+      const hint = resolveTeam(matchup[1]) || resolveTeam(matchup[2]);
+      if (typeof hint === 'string') teamHint = hint;
+      continue;
+    }
+
+    const hit = matchMarket(line);
+
+    if (!hit) {
+      // A threshold waiting for the market line that follows it.
+      const plus = PLUS_LINE.exec(line);
+      if (plus) {
+        pendingValue = { value: Number(plus[2]), cmp: 'gte' };
+        const who = plus[1].replace(/[‐-―|]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        if (who && looksLikeName(who)) pendingName = who;
+        continue;
+      }
+      // A name waiting for the market line that follows it.
+      if (looksLikeName(line)) { pendingName = line; continue; }
+
+      const bare = bareTeamLeg(line, resolveTeam);
+      if (bare) { legs.push(bare); continue; }
+
+      if (line.length > 3 && /\d/.test(line)) warnings.push(`Not understood: "${original}"`);
+      continue;
+    }
+
+    const leg = parseLeg(line, {
+      teamHint, resolvePlayer, resolveTeam, pendingValue, pendingName,
+    });
     if (leg) {
       legs.push(leg);
-      // Remember the price if it was written inline on the leg.
-      continue;
+      pendingValue = null;
+      pendingName = null;
+    } else if (line.length > 3) {
+      warnings.push(`Not understood: "${original}"`);
     }
-    if (line.length > 3 && /\d/.test(line)) warnings.push(`Not understood: "${line}"`);
   }
 
-  // A single-leg slip often prints only the leg price, which is the bet price.
-  if (!odds && legs.length === 1 && legs[0].odds) odds = legs[0].odds;
-  if (!odds && legs.length > 1) {
-    const prices = legs.map((l) => l.odds).filter(Boolean);
-    if (prices.length === legs.length) odds = parlayOdds(prices);
+  // The same leg appears twice when a parlay's summary line and its detail are
+  // both copied. Keep the better-resolved one.
+  const byKey = new Map();
+  for (const l of legs) {
+    const key = `${l.market}|${String(l.playerName || l.teamAbbr || '').toLowerCase()}|${l.line ?? ''}`;
+    const prev = byKey.get(key);
+    if (!prev || (!prev.athleteId && l.athleteId)) byKey.set(key, l);
   }
-  if (!odds && stake && toWin) {
+  const unique = [...byKey.values()];
+
+  // Stake and payout are printed by the book and are exact, so they beat a
+  // price scraped off a header.
+  if (stake && toWin && toWin > stake) {
     const ratio = toWin / stake;
     odds = ratio >= 2 ? Math.round((ratio - 1) * 100) : -Math.round(100 / (ratio - 1));
+  } else if (!odds && unique.length === 1 && unique[0].odds) {
+    odds = unique[0].odds;
+  } else if (!odds && unique.length > 1) {
+    const prices = unique.map((l) => l.odds).filter(Boolean);
+    if (prices.length === unique.length) odds = parlayOdds(prices);
   }
 
-  if (!legs.length) warnings.unshift('No legs recognised. Add them by hand below.');
+  if (!unique.length) warnings.unshift('No legs recognised. Add them by hand below.');
 
-  return { book, stake, odds, toWin, legs, warnings };
+  return { book, stake, odds, toWin, legs: unique, warnings };
 }
 
-function parseLeg(line, teamHint, resolvePlayer, resolveTeam) {
+function parseLeg(line, ctx) {
+  const { teamHint, resolvePlayer, resolveTeam, pendingValue, pendingName } = ctx;
   const hit = matchMarket(line);
-  // Books write a spread and a moneyline with no market word at all - just
-  // "Bengals -3.5" or "Bengals -140" - so those shapes are tried first.
   if (!hit) return bareTeamLeg(line, resolveTeam);
 
   const market = hit.market;
   const inlineOdds = /([+-]\d{3,5})/.exec(line);
 
-  // The line value, written either as "Over 39.5" / "Under 39.5" or "40+".
+  // The line value, written as "Over 39.5", "40+", "40 or more", or carried
+  // over from the line before.
   let side = 'over';
   let cmp = 'gt';
   let value = null;
@@ -637,25 +771,30 @@ function parseLeg(line, teamHint, resolvePlayer, resolveTeam) {
   } else if (alt) {
     value = Number(alt[1]);
     cmp = 'gte';
+  } else if (pendingValue) {
+    value = pendingValue.value;
+    cmp = pendingValue.cmp;
   }
 
   if (isGameMarket(market)) {
     if (market === 'spread') {
       const sp = /([A-Za-z .']+?)\s*([+-]\d+(?:\.\d+)?)/.exec(line);
       const abbr = sp ? resolveTeam(sp[1]) : null;
-      if (!abbr || !sp) return null;
-      return { market, teamAbbr: abbr, line: Number(sp[2]), cmp: 'gt', side: 'over', odds: oddsFrom(inlineOdds) };
+      if (!abbr || typeof abbr !== 'string') return null;
+      return {
+        market, teamAbbr: abbr, line: Number(sp[2]),
+        cmp: 'gt', side: 'over', odds: oddsFrom(inlineOdds),
+      };
     }
     if (market === 'moneyline') {
       const abbr = resolveTeam(line.replace(/money\s*line|to\s*win\s*(?:the\s*)?game|[+-]\d{3,5}/gi, '').trim());
-      if (!abbr) return null;
+      if (!abbr || typeof abbr !== 'string') return null;
       return { market, teamAbbr: abbr, odds: oddsFrom(inlineOdds) };
     }
-    // game or team total
     const abbr = resolveTeam(line.replace(MARKET_PATTERNS.find(([, m]) => m === 'game_total')[0], '')
       .replace(/\b(over|under|o|u)\s*\d+(?:\.\d+)?/i, '').replace(/[+-]\d{3,5}/, '').trim());
     if (value == null) return null;
-    return abbr
+    return typeof abbr === 'string' && abbr
       ? { market: 'team_total', teamAbbr: abbr, line: value, side, cmp, odds: oddsFrom(inlineOdds) }
       : { market: 'game_total', line: value, side, cmp, odds: oddsFrom(inlineOdds) };
   }
@@ -664,19 +803,21 @@ function parseLeg(line, teamHint, resolvePlayer, resolveTeam) {
   if (!binary && value == null) return null;
 
   // Whatever is left once the market phrase, the line and the price are gone
-  // is the player's name.
-  const name = line
+  // is the player's name - or, when the book put the name on its own line,
+  // nothing at all, and the name carried over from there.
+  let name = line
     .slice(0, hit.at)
     .concat(' ', line.slice(hit.at + hit.len))
     .replace(/\b(over|under)\b/gi, '')
     .replace(/\d+(?:\.\d+)?\s*\+?/g, '')
     .replace(/[+-]\d{3,5}/g, '')
-    .replace(/\b(or\s*more|scorer|alt|alternate|player)\b/gi, '')
+    .replace(/\b(or\s*more|scorer|alt|alternate|player|yards?|yds?)\b/gi, '')
     .replace(/[|–—]/g, ' ')
     .replace(/[-•]+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
+  if (!name && pendingName) name = pendingName;
   if (!name) return null;
 
   const r = resolvePlayer(name, teamHint);
