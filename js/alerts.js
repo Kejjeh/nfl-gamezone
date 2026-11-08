@@ -108,8 +108,20 @@ export function onNewPlay(play, game) {
 export function onRedZoneEntry(game) {
   if (!state.primed) return;
   chimeRedZone();
+
+  // Which team is driving is the whole point of a red-zone alert, and the
+  // score line alone does not say. ESPN leaves possessionTeamId and
+  // downDistance null often enough - seen live on a game reading
+  // isRedZone: true - that each part has to stand on its own.
+  const pid = game.possessionTeamId;
+  const driving = pid === game.home.id ? game.home.abbr
+    : pid === game.away.id ? game.away.abbr : null;
+
+  const body = [driving && `${driving} driving`, game.downDistance]
+    .filter(Boolean).join(' · ') || 'Inside the 20';
+
   notify(
     `Red zone - ${game.away.abbr} ${game.away.score}-${game.home.score} ${game.home.abbr}`,
-    game.downDistance || 'Inside the 20'
+    body
   );
 }

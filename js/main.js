@@ -341,15 +341,26 @@ function wireSettings() {
     const key = btn.dataset.setting;
     const next = !state.settings[key];
 
+    const msg = $('#notify-msg');
+
     if (key === 'notify' && next) {
       const perm = await alerts.requestNotifyPermission();
       if (perm !== 'granted') {
         state.settings.notify = false;
         renderToggles();
-        $('#set-diag').textContent = `Notifications ${perm}. Allow them in your browser to enable this.`;
+        // Next to the switch that was just clicked. This used to write into
+        // the diagnostics box, which sits in another section and is rebuilt
+        // every time settings opens, so the explanation vanished.
+        msg.textContent = perm === 'denied'
+          ? 'Your browser is blocking notifications for this site. Allow them in the site settings, then try again.'
+          : perm === 'unsupported'
+            ? 'This browser does not support desktop notifications.'
+            : 'Notification permission was not granted.';
+        msg.hidden = false;
         return;
       }
     }
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
     if (key === 'sound' && next) alerts.unlockAudio();
 
     state.settings[key] = next;

@@ -151,9 +151,14 @@ scoring check vs Sleeper
 
 Finished games are the real test. In a live game the two sources are sampled
 seconds apart, so a player who just gained yards reads higher here until
-Sleeper catches up. Live gaps are the size of a single play and almost always
-positive, which is what sampling lag looks like; a scoring bug would be a
-consistent offset that survived the whistle, and none does.
+Sleeper catches up.
+
+A live gap is one play wide, which is not the same as small: a 60-yard catch
+is seven points in PPR. Caught in the act during Week 9 — Denzel Boston read
+10.1 here against Sleeper's 3.1, a 60-yard reception Sleeper had not credited
+yet, and twenty seconds later Sleeper read 10.0. That is what sampling lag
+looks like. A scoring bug would be a consistent offset that survived the
+whistle, and none does.
 
 Where no league is connected the board falls back to full-PPR defaults, so it
 still shows something sensible.
@@ -210,7 +215,10 @@ new plays are announced without stealing focus.
   These paths can change without notice; parsing here is defensive throughout.
 - **Sleeper's API is free for non-commercial use only.** Personal dashboard is
   fine. Do not ship this as a product.
-- **Desktop notifications need the tab open.** A static host cannot push.
+- **Desktop notifications need the tab open**, and the browser's permission.
+  A static host cannot push. If the browser has blocked notifications for the
+  site, the toggle refuses to turn on and says so; the grant has to be made in
+  the browser's own site settings.
 - **Audio needs one click first.** Browsers block WebAudio until a user gesture.
 - **Defensive stats are not scored.** The box score and leaders board cover
   skill positions and kickers. Team defence scoring is a different shape - it is
