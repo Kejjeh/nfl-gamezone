@@ -20,6 +20,7 @@ node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (
 npm test                                        # runs both of the above
 ```
 
+- CI (`.github/workflows/tests.yml`) runs the syntax check and `bets-test.mjs` on every push to `main` and every PR. It leaves out `worker-test.mjs` (live ESPN).
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
 - Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. Anything else is proved by the syntax check plus loading the page.

@@ -1,0 +1,39 @@
+# Run the offline checks on every push to main and every pull request.
+#
+# Left out of CI, on purpose: tools/worker-test.mjs (and so `npm test`, which
+# runs it). It calls the live ESPN API, so its result depends on the network
+# and on what ESPN returns that day. Run it by hand when the Worker changes.
+# No secrets are used, and nothing is deployed.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Syntax check and bet settlement tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # No dependencies to install: package.json only marks js/*.js as ES modules.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Syntax check js/*.js
+        run: for f in js/*.js; do node --check "$f"; done
+
+      - name: Bet settlement tests (offline)
+        run: node tools/bets-test.mjs
