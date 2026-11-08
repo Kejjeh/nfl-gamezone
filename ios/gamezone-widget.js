@@ -31,6 +31,7 @@ const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 const CACHE_PLAYERS = 'gz-players.json';
 const CACHE_LEAGUE = 'gz-league.json';
 const CACHE_DATA = 'gz-last.json';
+const CACHE_USER = 'gz-user.json';
 
 // A week, not a day. Names, positions and teams barely move, and a rebuild
 // costs 5 MB of parsing - so it is worth doing rarely and in the app.
@@ -254,6 +255,15 @@ async function loadData(username) {
       fantasy = await loadFantasy(username, games, players);
     } catch (e) {
       error = e.message || String(e);
+    }
+  } else if (config.runsInApp) {
+    // A first run inside Scriptable has no Parameter and so no username, but it
+    // is still the one place with the memory to build the player map. Warm it
+    // here so the widget never has to attempt the 5 MB build in an extension.
+    try {
+      players = await loadPlayers();
+    } catch (e) {
+      /* nothing to show the user; the widget degrades to counts without names */
     }
   }
 
@@ -597,7 +607,15 @@ function errorWidget(message, family) {
 
 async function main() {
   const family = config.widgetFamily || 'medium';
-  const username = (args.widgetParameter || '').trim() || null;
+
+  // args.widgetParameter is set by the widget's Parameter field, and is empty
+  // when the script is run from inside Scriptable. Remembering it means the
+  // in-app run does the same work as the widget - which is the point of
+  // running it in the app: building the player map where there is memory for
+  // it rather than in an extension.
+  const given = (args.widgetParameter || '').trim() || null;
+  const username = given || readCache(CACHE_USER, 0);
+  if (given) writeCache(CACHE_USER, given);
 
   let data;
   try {

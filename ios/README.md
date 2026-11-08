@@ -53,6 +53,11 @@ below.
   the app keeps the widget from ever having to attempt it with an extension's
   much smaller memory budget.
 
+A script run from inside Scriptable gets no Parameter, so this first run shows
+scores and plays but not your matchup — that is expected, and it still builds
+the cache. Once the widget has run with your username, the script remembers it,
+so later in-app runs show your matchup too.
+
 **4. Add the widget.**
 
 - *Lock screen:* long-press the lock screen → **Customise** → tap the widget
