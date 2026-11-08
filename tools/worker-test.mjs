@@ -232,6 +232,15 @@ if (target) {
   const health = await worker.fetch(new Request('https://w/health'), env);
   const body = await health.json();
   check('health reports unconfigured when no key is set', body.configured, false);
+  check('health names every missing secret', body.missing,
+    ['VAPID_PRIVATE_JWK', 'VAPID_PUBLIC_KEY', 'VAPID_SUBJECT']);
+
+  const healthy = await worker.fetch(new Request('https://w/health'), {
+    GZ: makeKV(), VAPID_PRIVATE_JWK, VAPID_PUBLIC_KEY,
+    VAPID_SUBJECT: 'mailto:test@example.com',
+  });
+  const hb = await healthy.json();
+  check('health is clean once everything is set', [hb.configured, hb.missing], [true, []]);
 
   const unknown = await worker.fetch(new Request('https://w/bets', {
     method: 'POST', headers: { 'content-type': 'application/json' },

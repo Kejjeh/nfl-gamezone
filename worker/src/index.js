@@ -42,7 +42,16 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
 
     if (url.pathname === '/health') {
-      return json({ ok: true, configured: !!env.VAPID_PRIVATE_JWK && !!env.VAPID_PUBLIC_KEY }, env);
+      // Name what is missing. A half-configured Worker still answers every
+      // route and still runs its cron; it just never gets a push accepted,
+      // which is a miserable thing to debug from a phone.
+      const missing = [
+        !env.VAPID_PRIVATE_JWK && 'VAPID_PRIVATE_JWK',
+        !env.VAPID_PUBLIC_KEY && 'VAPID_PUBLIC_KEY',
+        !env.VAPID_SUBJECT && 'VAPID_SUBJECT',
+        !env.GZ && 'GZ (KV namespace)',
+      ].filter(Boolean);
+      return json({ ok: true, configured: missing.length === 0, missing }, env);
     }
 
     if (request.method !== 'POST') return json({ error: 'POST only' }, env, 405);

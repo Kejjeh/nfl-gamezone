@@ -16,8 +16,14 @@ crons = ["* * * * *"]
 [vars]
 # The site allowed to talk to this Worker. Set it to your Pages URL.
 ALLOWED_ORIGIN = "https://kejjeh.github.io"
-# Required by the VAPID spec so a push service can contact you.
-VAPID_SUBJECT = "mailto:you@example.com"
+
+# VAPID_SUBJECT is NOT here on purpose. The spec wants a mailto: a push
+# service can reach you at, and this file is committed to a public repo, so
+# it goes in as a secret instead:
+#
+#   npx wrangler secret put VAPID_SUBJECT
+#
+# Define it in both places and wrangler will warn that one shadows the other.
 
 # Subscriptions, their bets, and the last stat values seen.
 # Create with:  npx wrangler kv namespace create GZ

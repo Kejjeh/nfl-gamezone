@@ -52,7 +52,7 @@ never prints it.
 cd worker && npx wrangler kv namespace create GZ
 ```
 
-**3. Set the secrets**, then delete the local private key:
+**3. Set the three secrets**, then delete the local private key:
 
 ```bash
 npx wrangler secret put VAPID_PRIVATE_JWK < .vapid-private.json
@@ -63,12 +63,20 @@ npx wrangler secret put VAPID_PUBLIC_KEY
 ```
 
 ```bash
+npx wrangler secret put VAPID_SUBJECT
+```
+
+```bash
 rm .vapid-private.json
 ```
 
-**4. Set `VAPID_SUBJECT`** in `wrangler.toml` to a real `mailto:` address — the
-spec requires push services be able to contact you — and check
-`ALLOWED_ORIGIN` matches where the site is served from.
+`VAPID_SUBJECT` is a `mailto:` address a push service can reach you at, which
+the spec requires — `mailto:you@example.com`, with the `mailto:` prefix
+included. It is a secret rather than a `wrangler.toml` var for one reason only:
+that file is committed to a public repo, and this is an email address.
+
+**4. Check `ALLOWED_ORIGIN`** in `wrangler.toml` matches where the site is
+served from. It is the only thing left in that file worth changing.
 
 **5. Deploy**, then put the URL it prints into `push-config.json` as `api`:
 
@@ -89,7 +97,10 @@ Check it is alive:
 curl https://gamezone-push.<your-subdomain>.workers.dev/health
 ```
 
-`{"ok":true,"configured":true}` means both secrets are set.
+`{"ok":true,"configured":true,"missing":[]}` means every secret and the KV
+binding are in place. Anything listed in `missing` is a step that did not
+take - the Worker will still answer and still run its cron, it just will not
+get a push accepted.
 
 ## How it works
 
