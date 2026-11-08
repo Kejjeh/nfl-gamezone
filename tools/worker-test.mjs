@@ -213,6 +213,26 @@ if (target) {
     ok('pending is cleared once read', again.body === 'Your bets moved.', JSON.stringify(again));
   }
 
+  // the test route proves the chain on demand, without waiting for a bet
+  pushes.length = 0;
+  const tested = await worker.fetch(new Request('https://w/test', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  }), env);
+  check('test route reports success', (await tested.json()).ok, true);
+  ok('test route sent a push', pushes.length === 1, `${pushes.length} pushes`);
+  const tmsg = await (await worker.fetch(new Request('https://w/pending', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  }), env)).json();
+  check('test push carries the test message', tmsg.title, 'GameZone test');
+
+  const bogus = await worker.fetch(new Request('https://w/test', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint: 'https://stranger.example/x' }),
+  }), env);
+  check('test route refuses an endpoint it does not know', bogus.status, 404);
+
   // a dead subscription is dropped
   globalThis.fetch = async (url, init) => {
     const u = String(url?.url || url);

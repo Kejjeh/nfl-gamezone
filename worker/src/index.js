@@ -85,6 +85,25 @@ export default {
       return json({ ok: true, bets: rec.bets.length }, env);
     }
 
+    // Prove the whole chain - signature, push service, service worker,
+    // notification - without waiting for a bet to move. It only ever sends to
+    // an endpoint already in KV, so it cannot be pointed at a stranger.
+    if (url.pathname === '/test') {
+      const key = await keyFor(body.endpoint || '');
+      const rec = await read(env, key);
+      if (!rec) return json({ error: 'unknown subscription' }, env, 404);
+      rec.pending = {
+        title: 'GameZone test',
+        body: 'Phone alerts are working. Real ones look like this.',
+        tag: 'gz-test',
+      };
+      await env.GZ.put(key, JSON.stringify(rec));
+      const out = await sendPush(rec.subscription.endpoint, env);
+      if (out.state === 'gone') await env.GZ.delete(key);
+      return json({ ok: out.state === 'ok', state: out.state, detail: out.detail },
+        env, out.state === 'ok' ? 200 : 502);
+    }
+
     // The service worker asks for the message that belongs to this push.
     if (url.pathname === '/pending') {
       const key = await keyFor(body.endpoint || '');

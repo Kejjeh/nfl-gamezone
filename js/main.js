@@ -489,9 +489,29 @@ async function paintPush() {
 
   msg.textContent = text;
   msg.hidden = !text;
+
+  // Only offer the test once there is somewhere to send it.
+  const test = document.getElementById('push-test');
+  if (test) test.hidden = !st.subscribed;
 }
 
 function wireSettings() {
+  document.getElementById('push-test')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const msg = document.getElementById('push-msg');
+    const say = (s) => { if (msg) { msg.textContent = s; msg.hidden = false; } };
+    btn.disabled = true;
+    say('Sending...');
+    try {
+      await push.sendTest();
+      say('Sent. If nothing arrives, the phone is not receiving - check that '
+        + 'you opened this from the Home Screen icon, not a Safari tab.');
+    } catch (err) {
+      say(String(err.message || err));
+    }
+    btn.disabled = false;
+  });
+
   document.getElementById('push-toggle')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     const on = btn.getAttribute('aria-pressed') === 'true';

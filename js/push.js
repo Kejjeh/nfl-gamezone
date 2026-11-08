@@ -128,6 +128,15 @@ export async function syncBets() {
   }
 }
 
+// Fire one on demand. The only way to find out whether a phone actually
+// buzzes is to make it buzz.
+export async function sendTest() {
+  await loadConfig();
+  const sub = await current();
+  if (!sub) throw new Error('Turn phone alerts on first.');
+  return post('/test', { endpoint: sub.endpoint });
+}
+
 async function post(path, body) {
   const base = String(config.api || '').replace(/\/$/, '');
   const res = await fetch(base + path, {

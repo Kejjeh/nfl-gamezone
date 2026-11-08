@@ -1347,6 +1347,21 @@ body.panel-closed #panel { display: none; }
 }
 
 /* Explanation attached to a settings toggle that could not be turned on. */
+.t-action {
+  margin: -4px 2px 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.t-action:hover:not(:disabled) { border-color: var(--accent); }
+.t-action:disabled { opacity: 0.5; cursor: default; }
+
 .t-msg {
   margin: -4px 2px 10px;
   padding: 8px 10px;

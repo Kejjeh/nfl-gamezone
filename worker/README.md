@@ -140,6 +140,7 @@ already hit.
 |---|---|
 | `POST /subscribe` | `{subscription, bets}` — store a new subscription |
 | `POST /bets` | `{endpoint, bets}` — the site calls this whenever bets change |
+| `POST /test` | `{endpoint}` - send one alert now, to a subscription already stored |
 | `POST /pending` | `{endpoint}` — the service worker fetches, and clears, the message |
 | `POST /unsubscribe` | `{endpoint}` |
 | `GET /health` | whether the secrets are set |
