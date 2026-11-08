@@ -5,61 +5,81 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NFL GameZone</title>
 <meta name="description" content="Live NFL play feed for the desktop, with your Sleeper lineup highlighted.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0b0e">
 <link rel="stylesheet" href="app.css">
+<link rel="preconnect" href="https://site.api.espn.com" crossorigin>
+<link rel="preconnect" href="https://sports.core.api.espn.com" crossorigin>
+<link rel="preconnect" href="https://api.sleeper.app" crossorigin>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🏈</text></svg>">
 </head>
 <body>
 
 <header>
-  <div class="brand">NFL&nbsp;<span>GameZone</span></div>
+  <div class="brand">
+    <span class="brand-dot" id="brand-dot"></span>
+    GameZone
+  </div>
+
   <div id="matchup"></div>
+
   <div class="hdr-right">
-    <div id="filters">
-      <button data-mode="all" class="on">All</button>
-      <button data-mode="scoring">Scoring</button>
-      <button data-mode="redzone">Red zone</button>
-      <button data-mode="mine">My players</button>
+    <div id="filters" role="group" aria-label="Filter plays">
+      <button type="button" data-mode="all" aria-pressed="true">All</button>
+      <button type="button" data-mode="scoring" aria-pressed="false">Scoring</button>
+      <button type="button" data-mode="redzone" aria-pressed="false">Red zone</button>
+      <button type="button" data-mode="mine" aria-pressed="false">Mine</button>
     </div>
-    <button id="btn-settings" title="Settings">Settings</button>
-    <div id="conn">starting</div>
+
+    <button type="button" class="icon-btn" id="btn-settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+
+    <div id="conn" class="num" role="status" aria-live="off">&nbsp;</div>
   </div>
 </header>
 
 <main>
-  <aside id="rail"></aside>
-  <section id="feed">
-    <div class="empty">Loading games&hellip;</div>
-  </section>
+  <aside id="rail" aria-label="Games"></aside>
+  <section id="feed" aria-label="Play feed"></section>
 </main>
 
 <!-- first-run Sleeper connect -->
-<div class="overlay" id="setup" hidden>
+<div class="overlay" id="setup" hidden role="dialog" aria-modal="true" aria-labelledby="su-title">
   <div class="card">
-    <h2>Connect your Sleeper account</h2>
+    <h2 id="su-title">Connect Sleeper</h2>
     <p class="sub">
-      Pulls your league, lineup and live fantasy points so plays involving your
-      starters get flagged in the feed. Read-only and public &mdash; no password,
-      no login, nothing stored anywhere but this browser.
+      Pulls your league, lineup and live fantasy points, so plays involving your
+      starters get flagged as they happen. Read-only and public &mdash; no password,
+      no login, and nothing stored outside this browser.
     </p>
+
     <label for="su-name">Sleeper username</label>
-    <input type="text" id="su-name" autocomplete="off" spellcheck="false" placeholder="username">
-    <div id="su-leagues"></div>
-    <div class="err" id="su-err"></div>
+    <input type="text" id="su-name" autocomplete="off" spellcheck="false"
+           autocapitalize="off" placeholder="username">
+
+    <div class="err" id="su-err" role="alert"></div>
+
     <div class="row">
-      <button id="su-skip">Skip</button>
-      <button id="su-go" class="primary">Connect</button>
+      <button type="button" id="su-skip">Skip</button>
+      <button type="button" id="su-go" class="primary">Connect</button>
     </div>
+
     <p class="note">
-      The play feed works without this. Skip it and you get every play from
+      The play feed works without this &mdash; skip it and you get every play from
       every game, just with no fantasy layer.
     </p>
   </div>
 </div>
 
 <!-- settings -->
-<div class="overlay" id="settings" hidden>
+<div class="overlay" id="settings" hidden role="dialog" aria-modal="true" aria-labelledby="set-title">
   <div class="card">
-    <h2>Settings</h2>
+    <h2 id="set-title">Settings</h2>
     <p class="sub">Saved in this browser.</p>
 
     <div class="toggle">
@@ -67,15 +87,17 @@
         <div class="t-name">Sound</div>
         <div class="t-desc">Chime on touchdowns, softer tone on red-zone entries.</div>
       </div>
-      <button data-setting="sound"></button>
+      <button type="button" class="switch" data-setting="sound"
+              aria-pressed="false" aria-label="Sound"></button>
     </div>
 
     <div class="toggle">
       <div>
-        <div class="t-name">Visual flash</div>
-        <div class="t-desc">New plays flash as they land; colour-coded by event.</div>
+        <div class="t-name">Motion</div>
+        <div class="t-desc">New plays animate in as they land.</div>
       </div>
-      <button data-setting="visual"></button>
+      <button type="button" class="switch" data-setting="visual"
+              aria-pressed="false" aria-label="Motion"></button>
     </div>
 
     <div class="toggle">
@@ -83,10 +105,11 @@
         <div class="t-name">Desktop notifications</div>
         <div class="t-desc">
           Touchdowns and your starters, shown even when this tab is in the
-          background. Only works while the tab stays open.
+          background. Works only while the tab stays open.
         </div>
       </div>
-      <button data-setting="notify"></button>
+      <button type="button" class="switch" data-setting="notify"
+              aria-pressed="false" aria-label="Desktop notifications"></button>
     </div>
 
     <label>Sleeper</label>
@@ -96,13 +119,14 @@
     <div id="set-diag" class="diag"></div>
 
     <div class="row">
-      <button id="set-reset">Clear cached data</button>
-      <button id="set-close" class="primary">Done</button>
+      <button type="button" id="set-reset">Clear cache</button>
+      <button type="button" id="set-close" class="primary">Done</button>
     </div>
+
     <p class="note">
-      Play data comes from ESPN&rsquo;s public endpoints and runs roughly 30
-      seconds behind the broadcast. Fantasy points come straight from Sleeper,
-      so they match your Sleeper app exactly.
+      Plays come from ESPN&rsquo;s public endpoints and run roughly 30 seconds
+      behind the broadcast. Fantasy points come straight from Sleeper, so they
+      match your Sleeper app exactly.
     </p>
   </div>
 </div>

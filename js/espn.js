@@ -24,14 +24,21 @@ const idFromRef = (ref) => {
 // browser fails outright. See js/teams.js.
 export function loadTeams() {
   if (!state.teamsById.size) {
-    for (const [id, abbr, short] of TEAMS) {
-      state.teamsById.set(id, { id, abbr, short, name: short });
+    for (const [id, abbr, short, accent] of TEAMS) {
+      state.teamsById.set(id, { id, abbr, short, name: short, accent });
     }
   }
   return [...state.teamsById.values()];
 }
 
 export const teamAbbr = (id) => state.teamsById.get(String(id))?.abbr || null;
+
+export const teamColor = (id) => state.teamsById.get(String(id))?.accent || null;
+
+export function colorForAbbr(abbr) {
+  for (const t of state.teamsById.values()) if (t.abbr === abbr) return t.accent;
+  return null;
+}
 
 /* ---------- scoreboard ---------- */
 
@@ -153,6 +160,7 @@ function normalizePlay(p, eventId) {
       startYTE: p.start?.yardsToEndzone ?? null,
       endYTE: p.end?.yardsToEndzone ?? null,
       downDistance: p.start?.shortDownDistanceText || null,
+      yards: Number(p.statYardage) || 0,
       // wallclock is when the play happened; fall back to modified, then now.
       ts: Date.parse(p.wallclock || p.modified || '') || Date.now(),
     };

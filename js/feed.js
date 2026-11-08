@@ -1,17 +1,50 @@
 // The unified play feed: every live game merged into one reverse-chronological
 // stream. New cards are inserted in place rather than rebuilding the list, so
-// scroll position and the flash animation survive each poll.
+// scroll position and the entrance animation survive each poll.
+//
+// Plays are tiered by significance. A full Sunday pushes well over a thousand
+// plays through here and most are a 4-yard run; if they all render identically
+// the feed is unreadable. Only plays that matter get visual weight.
 import { state } from './state.js';
 import { FEED_CAP } from './config.js';
+import * as espn from './espn.js';
 import * as bridge from './bridge.js';
 import * as alerts from './alerts.js';
 
 const rendered = new Map();   // playId -> node
 
+const BIG_GAIN = 20;
+
+// Measured over a full game: 26 of 174 plays are timeouts or the coin toss.
+// "Official Timeout at 11:12" carries no information for a viewer, and at 15%
+// of the feed it is the single biggest source of noise. Dropped outright.
+const DROP = /^(official timeout|timeout|coin toss)$/i;
+
+// Clock and structure markers. Worth keeping for orientation, but they are
+// never significant, whatever the field position.
+const ADMIN = /^(end period|end of half|end of game|two-minute warning)$/i;
+
+// Punts and kickoffs travel 40-60 yards by definition, so the big-gain rule
+// would promote every single one of them.
+const LONG_BY_NATURE = /^(kickoff|punt)$/i;
+
 const isRedZonePlay = (p) =>
   (p.endYTE != null && p.endYTE <= 20) || (p.startYTE != null && p.startYTE <= 20);
 
+// log < note < key < score
+function tierOf(p) {
+  if (p.scoringPlay) return 'score';
+  if (p.isTurnover) return 'key';
+  if (p.fan) return 'key';
+  if (ADMIN.test(p.type)) return 'log';
+  if (isRedZonePlay(p)) return 'note';
+  if (!LONG_BY_NATURE.test(p.type) && Math.abs(p.yards) >= BIG_GAIN) return 'note';
+  if (p.isPenalty) return 'note';
+  return 'log';
+}
+
 function passes(p) {
+  if (DROP.test(p.type)) return false;
   const f = state.filters;
   if (f.gameId && p.eventId !== f.gameId) return false;
   switch (f.mode) {
@@ -27,51 +60,70 @@ function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-function classesFor(p) {
-  const c = ['p'];
-  if (p.isTD) c.push('td');
-  else if (p.isTurnover) c.push('turn');
-  else if (p.scoringPlay) c.push('scoring');
-  if (p.fan) c.push(p.fan.side);
-  return c;
-}
-
 function tags(p) {
   const out = [];
-  if (p.isTD) out.push('<span class="tag td">TD</span>');
-  else if (p.scoringPlay && /field goal/i.test(p.type)) out.push('<span class="tag fg">FG</span>');
-  else if (p.scoringPlay) out.push('<span class="tag fg">Score</span>');
-  if (p.isTurnover) out.push('<span class="tag turn">Turnover</span>');
-  if (isRedZonePlay(p) && !p.scoringPlay) out.push('<span class="tag rz">Red zone</span>');
-  if (p.isPenalty && !p.scoringPlay) out.push('<span class="tag pen">Flag</span>');
+  if (p.isTD) out.push('<span class="tag tag--td">TD</span>');
+  else if (p.scoringPlay && /field goal/i.test(p.type)) out.push('<span class="tag tag--fg">FG</span>');
+  else if (p.scoringPlay) out.push('<span class="tag tag--fg">Score</span>');
+  if (p.isTurnover) out.push('<span class="tag tag--turn">Turnover</span>');
+  // A clock marker that happens to sit inside the 20 is not a red-zone event.
+  if (isRedZonePlay(p) && !p.scoringPlay && !ADMIN.test(p.type)) {
+    out.push('<span class="tag tag--rz">Red zone</span>');
+  }
+  if (p.isPenalty && !p.scoringPlay) out.push('<span class="tag tag--pen">Flag</span>');
   return out.join('');
 }
 
-function card(p, game, flash) {
+function card(p, game, isNew) {
+  const tier = tierOf(p);
   const node = document.createElement('article');
-  node.className = classesFor(p).join(' ') + (flash ? ' flash' : '');
+
+  const cls = ['p', `p--${tier}`];
+  if (p.fan) cls.push(p.fan.side === 'mine' ? 'p--mine' : 'p--opp');
+  else if (p.isTurnover) cls.push('p--turnover');
+  if (isNew) cls.push('is-new');
+  node.className = cls.join(' ');
+
   node.dataset.ts = String(p.ts);
   node.dataset.seq = String(p.seq);
 
-  const label = game ? `${game.away.abbr} @ ${game.home.abbr}` : '';
-  const score = game ? `${p.awayScore}-${p.homeScore}` : '';
-  const when = p.period ? `Q${p.period} ${p.clock || ''}` : '';
+  // Team colour drives the accent rule and the score card wash, so a glance
+  // tells you whose play it was without reading the abbreviation.
+  const colour = p.teamId ? espn.teamColor(p.teamId) : null;
+  if (colour) node.style.setProperty('--team', colour);
+
+  const offense = p.teamId ? espn.teamAbbr(p.teamId) : null;
+  let matchup = '';
+  if (game) {
+    const a = game.away.abbr;
+    const h = game.home.abbr;
+    matchup = offense === h
+      ? `<span class="p-vs">${esc(a)} @</span> <span class="p-team">${esc(h)}</span>`
+      : `<span class="p-team">${esc(a)}</span> <span class="p-vs">@ ${esc(h)}</span>`;
+  }
+
+  // The running score on a routine 3-yard run is pure repetition - the rail
+  // already shows it, and it appears on every single line. Show it only where
+  // it changed or matters.
+  const score = game && tier !== 'log' ? `${p.awayScore}&ndash;${p.homeScore}` : '';
+  const when = p.period ? `Q${p.period}${p.clock ? ' ' + p.clock : ''}` : '';
 
   let fan = '';
   if (p.fan) {
-    const badge = p.fan.side === 'mine' ? 'YOUR STARTER' : 'OPPONENT';
+    const badge = p.fan.side === 'mine' ? 'Your starter' : 'Opponent';
     const who = p.fan.players.map((x) => {
-      const pts = x.points != null ? `<span class="pt">${Number(x.points).toFixed(1)} pts</span>` : '';
+      const pts = x.points != null
+        ? `<span class="pt">${Number(x.points).toFixed(1)}</span>` : '';
       return `<span class="nm">${esc(x.name)}</span> ${pts}`;
-    }).join(' &middot; ');
-    fan = `<div class="p-fan"><span class="fan-badge">${badge}</span> ${who}</div>`;
+    }).join('');
+    fan = `<div class="p-fan"><span class="fan-badge">${badge}</span>${who}</div>`;
   }
 
   node.innerHTML =
     `<div class="p-head">
-       <span class="p-game">${esc(label)}</span>
-       <span class="p-sc">${score}</span>
-       <span class="p-clock">${esc(when)}</span>
+       ${matchup}
+       <span class="p-sc num">${score}</span>
+       <span class="p-clock num">${esc(when)}</span>
        ${tags(p)}
      </div>
      <div class="p-text">${esc((p.text || p.shortText || '').trim())}</div>
@@ -99,6 +151,9 @@ function listEl() {
     feed.replaceChildren();
     list = document.createElement('div');
     list.className = 'feed-list';
+    // Screen readers announce new plays without stealing focus.
+    list.setAttribute('aria-live', 'polite');
+    list.setAttribute('aria-relevant', 'additions');
     feed.append(list);
   }
   return list;
@@ -170,10 +225,21 @@ export function rebuild() {
   showEmptyIfNeeded(list);
 }
 
+export function showSkeleton() {
+  const feed = document.getElementById('feed');
+  const rows = Array.from({ length: 7 }, (_, i) => {
+    const w = [72, 54, 83, 61, 77, 48, 68][i];
+    return `<div class="skel-row">
+        <div class="skel skel-line" style="width:${w > 65 ? 110 : 90}px"></div>
+        <div class="skel skel-line" style="width:${w}%;height:11px"></div>
+      </div>`;
+  }).join('');
+  feed.innerHTML = `<div class="feed-list">${rows}</div>`;
+}
+
 function showEmptyIfNeeded(list) {
   const feed = document.getElementById('feed');
-  const old = feed.querySelector('.empty');
-  if (old) old.remove();
+  feed.querySelector('.empty')?.remove();
   if (list.children.length) return;
 
   const live = [...state.games.values()].filter((g) => g.state === 'in').length;
@@ -183,15 +249,15 @@ function showEmptyIfNeeded(list) {
 
   let msg;
   if (state.filters.mode !== 'all' || state.filters.gameId) {
-    msg = 'No plays match this filter yet.';
+    msg = '<b>Nothing matches yet</b>Plays will appear here as they happen.';
   } else if (live) {
-    msg = 'Waiting on the first plays&hellip;';
+    msg = '<b>Waiting on the first plays</b>Games are under way.';
   } else if (next) {
     const d = new Date(next.date);
-    msg = `<b>No games in progress.</b><br>Next kickoff ${d.toLocaleString([], {
-      weekday: 'short', hour: 'numeric', minute: '2-digit' })} &mdash; ${esc(next.shortName)}`;
+    msg = `<b>No games in progress</b>Next kickoff ${d.toLocaleString([], {
+      weekday: 'long', hour: 'numeric', minute: '2-digit' })} &middot; ${esc(next.shortName)}`;
   } else {
-    msg = '<b>No games scheduled.</b><br>Add <code>?week=9</code> to the URL to replay a past week.';
+    msg = '<b>No games scheduled</b>Add <code>?week=9</code> to the URL to replay a past week.';
   }
 
   const d = document.createElement('div');
@@ -206,7 +272,10 @@ export function wire() {
     const btn = e.target.closest('[data-mode]');
     if (!btn) return;
     state.filters.mode = btn.dataset.mode;
-    for (const b of bar.children) b.classList.toggle('on', b === btn);
+    for (const b of bar.children) {
+      b.setAttribute('aria-pressed', String(b === btn));
+    }
+    document.getElementById('feed').scrollTop = 0;
     rebuild();
   });
 }

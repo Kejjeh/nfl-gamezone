@@ -103,6 +103,50 @@ js/main.js      boot and wiring
 `Access-Control-Allow-Origin`, so a browser cannot read it. Every other
 endpoint used here sends `*`.
 
+## Design notes
+
+The feed pushes well over a thousand plays through on a Sunday and almost all
+of them are a 4-yard run. The design problem is not making plays look good, it
+is making the handful that matter findable among the ones that do not.
+
+**Plays are tiered, not uniform.** Four levels, in `tierOf()`:
+
+| Tier | What | Treatment |
+|---|---|---|
+| `log` | routine play | inline one-liner, no chrome, recessive text |
+| `note` | red zone, penalty, 20+ yard gain | gains a surface |
+| `key` | turnover, or one of your players | surface, accent rule, full-contrast text |
+| `score` | touchdown, field goal | team-colour wash, larger text, score shown |
+
+**Timeouts are dropped.** Measured over a full game, 26 of 174 plays are
+`Official Timeout`, `Timeout` or `Coin Toss` — 15% of the feed, and
+"Official Timeout at 11:12" tells a viewer nothing. Clock markers like
+`END QUARTER 1` are kept but forced to `log`, since field position should not
+promote them.
+
+**Punts and kickoffs are exempt from the big-gain rule**, because they travel
+40–60 yards by definition and would otherwise all be promoted.
+
+**The running score is hidden on routine plays.** It appears on every line
+otherwise, which is pure repetition — the rail already shows it.
+
+**Team colour instead of logos.** ESPN's logo assets are ~130 KB each and the
+CDN ignores resize parameters, so 32 of them would be about 4 MB. A colour bar
+in the rail and a coloured abbreviation on each play give the same at-a-glance
+orientation for nothing. Many NFL primaries are near-black (`CHI #0b1c3a`,
+`BAL #241773`) and invisible on a dark surface, so `js/teams.js` lifts
+lightness in HLS space while preserving hue. Mixing toward white instead
+destroys identity — a first pass turned Buffalo pink.
+
+**Contrast is measured, not eyeballed.** All three text steps clear WCAG AA on
+both background and surface (15.6:1, 7.1:1, 4.9:1). An earlier `--fg-3` of
+`#626b7b` came in at 3.4:1, which fails for body text — and routine play text
+is body text.
+
+Motion respects `prefers-reduced-motion`. Filters and game rows are real
+buttons carrying `aria-pressed`; the feed is an `aria-live="polite"` region so
+new plays are announced without stealing focus.
+
 ## Known limitations
 
 - **About 30 seconds behind the broadcast.** Measured against play `wallclock`.

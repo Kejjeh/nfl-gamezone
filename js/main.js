@@ -122,16 +122,21 @@ const pollers = {
 
 function renderStatus() {
   const el = $('#conn');
+  const dot = $('#brand-dot');
   if (!el) return;
+
   const failing = pollers.scoreboard.failures + pollers.plays.failures;
+  const live = anyLive();
+  dot?.classList.toggle('live', live && !failing);
+
   if (failing) {
-    el.className = 'bad';
+    el.className = 'num bad';
     el.textContent = 'reconnecting';
     return;
   }
   const age = Math.round((Date.now() - state.status.lastUpdate) / 1000);
-  el.className = '';
-  el.textContent = anyLive() ? `live ${age}s` : `idle ${age}s`;
+  el.className = 'num';
+  el.textContent = live ? `${age}s` : 'idle';
 }
 setInterval(renderStatus, 1000);
 
@@ -243,9 +248,7 @@ function saveSettings() { store.set('settings', state.settings); }
 
 function renderToggles() {
   for (const btn of document.querySelectorAll('[data-setting]')) {
-    const on = !!state.settings[btn.dataset.setting];
-    btn.textContent = on ? 'On' : 'Off';
-    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(!!state.settings[btn.dataset.setting]));
   }
 }
 
@@ -350,11 +353,9 @@ async function boot() {
   wireSettings();
   subscribe((what) => { if (what === 'filters') feed.rebuild(); });
 
-  try {
-    espn.loadTeams();
-  } catch (err) {
-    console.error('[boot] teams failed', err);
-  }
+  espn.loadTeams();
+  feed.showSkeleton();
+  rail.render();            // renders its own skeleton while empty
 
   // Ingest the existing backlog with alerts suppressed, then go live.
   try {
