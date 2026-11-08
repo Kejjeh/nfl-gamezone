@@ -256,6 +256,47 @@ back, `-webkit-text-size-adjust` so landscape does not inflate type, 38px
 minimum on anything tappable, and dialogs that fill the screen instead of
 floating in it.
 
+## The iPhone lock screen
+
+`ios/gamezone-widget.js` is a [Scriptable](https://scriptable.app) script that
+puts the matchup on the lock or home screen. Scriptable runs JavaScript as a
+real WidgetKit widget, so this needs no Mac, no Xcode and no Apple Developer
+account. Setup is in [`ios/README.md`](ios/README.md).
+
+It is deliberately **not** a play feed. Apple's WidgetKit documentation gives a
+frequently viewed widget 40 to 70 refreshes a day — roughly every 15 to 60
+minutes — and requires timeline entries about five minutes apart. The budget is
+the system's. A widget showing "the latest play" would be showing a play from
+somewhere in the last hour while looking current, which is worse than showing
+nothing. So it shows what survives that cadence: your matchup total, how many
+starters have not kicked off, live scores, and the newest play from each live
+game as context. Tapping it opens this site, which is the real feed.
+
+Two things shaped the code more than the layout did:
+
+- **Memory.** The widget needs player names and teams, and Sleeper's
+  `players/nfl` is **14.0 MB**. Fetched one position at a time it is 5.00 MB
+  across six requests and, the number that matters, peaks at **2.1 MB** for a
+  single parse. Even so a widget extension gets a fraction of an app's memory,
+  so the widget prefers a stale map over rebuilding one and only builds from
+  cold if there is nothing cached at all. Running the script once inside
+  Scriptable after install does the build where there is room for it.
+- **Text length.** A lock-screen line is about 34 characters; ESPN play text is
+  routinely 120, and spends a third of that on things nobody glances at a phone
+  to read. `compressPlay` strips the formation, the tackler in brackets or
+  trailing parentheses, the penalty clause bolted on the end, and the long
+  snapper — `"C.Smyth 48 yard field goal is GOOD, Center-Z.Wood,
+  Holder-R.Wright"` is 66 characters and becomes 34. It also never compresses a
+  play to nothing, which a text that is entirely a parenthetical
+  (`"(Brandon Aubrey Kick)"`) otherwise did, leaving a bare `DAL-IND`.
+
+Scriptable only exists on iOS, so `tools/widget-preview.mjs` and
+`tools/widget-scenarios.mjs` stub its globals and run the real script file from
+Node against the live APIs — the first printing every size as text and flagging
+any line over its budget, the second forcing the four states a live Sunday never
+reaches. That covers the data and every rendered string. It does not cover
+layout; only the device answers that.
+
 ## Design notes
 
 The feed pushes well over a thousand plays through on a Sunday and almost all
