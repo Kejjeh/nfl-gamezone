@@ -30,8 +30,10 @@ export const TTL = {
 
 export const LS_PREFIX = 'gamezone:';
 
-// Max play cards kept in the DOM.
+// Max play cards kept in the DOM. Phones get a smaller ceiling: same markup,
+// far less hardware, and nobody scrolls 400 cards on a 6-inch screen.
 export const FEED_CAP = 400;
+export const FEED_CAP_SMALL = 150;
 
 // ESPN uses a few team abbreviations that differ from Sleeper's.
 export const TEAM_ALIASES = {

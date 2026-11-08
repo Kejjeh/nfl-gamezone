@@ -214,6 +214,48 @@ whole once. The one-time cost is about 37 KB gzipped per game.
 Finished games are pulled too, so the morning slate is still in the feed when
 you open the page in the evening.
 
+## Phones
+
+The desktop layout is three columns. A phone gets one at a time, switched from
+a bottom bar within thumb reach rather than a menu at the top of a tall screen:
+**Games · Feed · Stats**. Tapping a game in Games filters the feed and moves
+there, because that is what you tapped it for.
+
+What the phone layout had to fix:
+
+- **The breakpoint never applied.** `body.panel-closed main` is a desktop rule
+  outside any media query, and it outranks a bare `main` inside one. Below
+  820px the phone kept a 220px rail and a **155px feed**, which is why play
+  text wrapped seven lines deep. Specificity, not the breakpoint, was the bug.
+- **Chrome ate the screen.** Header plus the wrapped chip block came to 251px
+  of 812 — 31% before a single play. Now 84px and one scrolling chip row; the
+  feed gets 74% of the screen.
+- **Held sideways**, a phone has 375px of height and the stacked header plus
+  bottom bar took 40% of it. A short-viewport rule drops the brand, puts the
+  score inline and shrinks the bar to recover it.
+- The segmented filter is **moved** into the chip row rather than hidden.
+  Dropping Scoring / Red zone / Mine on the device with the least screen would
+  remove the feed's most useful controls exactly where they matter most.
+- Phones keep **150 feed cards** rather than 400. The whole day stays in memory
+  for filtering and stats; it is the DOM that is capped.
+
+A phone is identified by shape, not width alone:
+
+```css
+@media (max-width: 700px), (max-height: 500px) and (max-width: 900px)
+```
+
+A narrow screen, or a short one that is not a desktop — which is how a phone
+held sideways (812×375) reads. An iPad portrait (768×1024) is neither, so it
+keeps the rail beside the feed with the stats panel overlaying. The same query
+string lives in `main.js`; the two must stay identical.
+
+Also handled: `env(safe-area-inset-*)` around the notch and home indicator,
+16px on the one text input so Safari does not zoom the page and never zoom
+back, `-webkit-text-size-adjust` so landscape does not inflate type, 38px
+minimum on anything tappable, and dialogs that fill the screen instead of
+floating in it.
+
 ## Design notes
 
 The feed pushes well over a thousand plays through on a Sunday and almost all

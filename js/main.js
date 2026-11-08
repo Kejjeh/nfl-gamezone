@@ -346,6 +346,85 @@ function renderDiag() {
   el.textContent = lines.join('\n');
 }
 
+/* ---------- phone layout ---------- */
+
+// One pane at a time on a phone, switched from the bottom bar. The breakpoint
+// matches the CSS so the two can never disagree about what "phone" means.
+// Mirrors the phone query in app.css - a narrow screen, or a short one that is
+// not a desktop. Changing one without the other splits the layout from the
+// behaviour that drives it.
+const PHONE = window.matchMedia('(max-width: 700px), (max-height: 500px) and (max-width: 900px)');
+
+function setMobileView(view) {
+  document.body.dataset.mview = view;
+  for (const b of document.querySelectorAll('#mnav [data-mview]')) {
+    b.setAttribute('aria-pressed', String(b.dataset.mview === view));
+  }
+  // Each pane keeps its own scroll position, so a switch starts at the top of
+  // whatever was just opened rather than halfway down it.
+  const pane = view === 'games' ? document.getElementById('rail')
+             : view === 'stats' ? document.getElementById('panel')
+             : document.getElementById('feed');
+  pane?.scrollTo?.(0, 0);
+}
+
+// The segmented filter lives in the header on a desktop and in the chip row on
+// a phone. Moving the element keeps one set of buttons and one handler.
+function placeFilters() {
+  const filters = document.getElementById('filters');
+  const chips = document.getElementById('type-filters');
+  const headerSlot = document.querySelector('.hdr-right');
+  if (!filters || !chips || !headerSlot) return;
+
+  if (PHONE.matches) {
+    if (filters.parentElement !== chips) chips.prepend(filters);
+  } else if (filters.parentElement !== headerSlot) {
+    headerSlot.prepend(filters);
+  }
+}
+
+let wasPhone = null;
+
+function applyLayout() {
+  placeFilters();
+
+  // The feed keeps fewer cards on a phone, so crossing the breakpoint has to
+  // rebuild it for the new ceiling to mean anything. Only on an actual
+  // crossing: this runs on every resize tick.
+  if (wasPhone !== null && wasPhone !== PHONE.matches) feed.rebuild();
+  wasPhone = PHONE.matches;
+
+  if (PHONE.matches) {
+    if (!document.body.dataset.mview) setMobileView('feed');
+    // The phone shows one pane at a time, so the desktop's "panel closed"
+    // state is meaningless here and would hide the stats view outright.
+    document.body.classList.remove('panel-closed');
+  } else {
+    delete document.body.dataset.mview;
+    document.body.classList.toggle('panel-closed', !state.panel.open);
+  }
+}
+
+function wireMobile() {
+  document.getElementById('mnav')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-mview]');
+    if (btn) setMobileView(btn.dataset.mview);
+  });
+
+  // Three signals for one event. matchMedia is the correct one, but iOS has a
+  // long history of reporting stale dimensions through a rotation, and the
+  // handler is idempotent, so the cheap belt-and-braces is worth more than the
+  // tidiness of a single listener.
+  let pending = null;
+  const relayout = () => {
+    clearTimeout(pending);
+    pending = setTimeout(applyLayout, 80);
+  };
+  PHONE.addEventListener('change', relayout);
+  window.addEventListener('resize', relayout);
+  window.addEventListener('orientationchange', relayout);
+}
+
 function wireSettings() {
   $('#btn-settings').addEventListener('click', () => {
     renderToggles();
@@ -435,15 +514,19 @@ async function boot() {
     else if (state.panel.tab === 'game') state.panel.tab = 'leaders';
     feed.rebuild();
     panel.render();
+    // On a phone the rail is its own screen, so selecting a game there should
+    // move to the thing you selected it for rather than leave you in a list.
+    if (PHONE.matches && state.filters.gameId) setMobileView('feed');
   });
 
   espn.loadTeams();
   panel.wire();
-  // Three columns need room; below that the panel overlays, so start it closed.
-  if (window.innerWidth < 1180) {
-    state.panel.open = false;
-    document.body.classList.add('panel-closed');
-  }
+  wireMobile();
+  // Three columns need room; between the phone breakpoint and that, the panel
+  // overlays the feed, so it starts closed. A phone ignores this entirely -
+  // applyLayout() decides there.
+  if (window.innerWidth < 1180) state.panel.open = false;
+  applyLayout();
   feed.showSkeleton();
   rail.render();            // renders its own skeleton while empty
   panel.render();
@@ -466,7 +549,8 @@ async function boot() {
   initSleeper();
   initBridge();
 
-  window.gz = { state, pollers, feed, bridge, espn, sleeper };  // console access
+  // console access, and the hook the layout is checked through
+  window.gz = { state, pollers, feed, bridge, espn, sleeper, applyLayout, setMobileView };
 }
 
 boot();

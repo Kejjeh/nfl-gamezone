@@ -6,7 +6,12 @@
 // plays through here and most are a 4-yard run; if they all render identically
 // the feed is unreadable. Only plays that matter get visual weight.
 import { state } from './state.js';
-import { FEED_CAP } from './config.js';
+import { FEED_CAP, FEED_CAP_SMALL } from './config.js';
+
+// A phone renders the same cards on a fraction of the hardware, and a card it
+// has to scroll a thousand rows to reach is a card nobody reads. Cap lower
+// there; the whole day is still in state.plays for filtering and stats.
+const cap = () => (window.innerWidth <= 700 ? FEED_CAP_SMALL : FEED_CAP);
 import * as espn from './espn.js';
 import * as bridge from './bridge.js';
 import * as alerts from './alerts.js';
@@ -226,7 +231,8 @@ export function ingest(plays, { flash = true } = {}) {
 }
 
 function trim(list) {
-  while (list.children.length > FEED_CAP) {
+  const max = cap();
+  while (list.children.length > max) {
     const last = list.lastElementChild;
     for (const [id, n] of rendered) if (n === last) { rendered.delete(id); break; }
     last.remove();
@@ -244,7 +250,7 @@ export function rebuild() {
     .map(annotate)
     .filter(passes)
     .sort((a, b) => b.ts - a.ts || b.seq - a.seq)
-    .slice(0, FEED_CAP);
+    .slice(0, cap());
 
   const frag = document.createDocumentFragment();
   for (const p of all) {
