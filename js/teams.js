@@ -1,0 +1,38 @@
+// Generated from ESPN on 2026-11-08. The site.api /teams list endpoint is
+// the one ESPN path that does NOT send CORS headers, so this is baked in
+// rather than fetched. Franchise ids and abbreviations are stable.
+export const TEAMS = [
+  ['1', 'ATL', 'Falcons'],
+  ['2', 'BUF', 'Bills'],
+  ['3', 'CHI', 'Bears'],
+  ['4', 'CIN', 'Bengals'],
+  ['5', 'CLE', 'Browns'],
+  ['6', 'DAL', 'Cowboys'],
+  ['7', 'DEN', 'Broncos'],
+  ['8', 'DET', 'Lions'],
+  ['9', 'GB', 'Packers'],
+  ['10', 'TEN', 'Titans'],
+  ['11', 'IND', 'Colts'],
+  ['12', 'KC', 'Chiefs'],
+  ['13', 'LV', 'Raiders'],
+  ['14', 'LAR', 'Rams'],
+  ['15', 'MIA', 'Dolphins'],
+  ['16', 'MIN', 'Vikings'],
+  ['17', 'NE', 'Patriots'],
+  ['18', 'NO', 'Saints'],
+  ['19', 'NYG', 'Giants'],
+  ['20', 'NYJ', 'Jets'],
+  ['21', 'PHI', 'Eagles'],
+  ['22', 'ARI', 'Cardinals'],
+  ['23', 'PIT', 'Steelers'],
+  ['24', 'LAC', 'Chargers'],
+  ['25', 'SF', '49ers'],
+  ['26', 'SEA', 'Seahawks'],
+  ['27', 'TB', 'Buccaneers'],
+  ['28', 'WSH', 'Commanders'],
+  ['29', 'CAR', 'Panthers'],
+  ['30', 'JAX', 'Jaguars'],
+  ['33', 'BAL', 'Ravens'],
+  ['34', 'HOU', 'Texans'],
+];
+// count: 32

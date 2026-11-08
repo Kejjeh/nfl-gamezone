@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFL GameZone</title>
+<meta name="description" content="Live NFL play feed for the desktop, with your Sleeper lineup highlighted.">
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🏈</text></svg>">
+</head>
+<body>
+
+<header>
+  <div class="brand">NFL&nbsp;<span>GameZone</span></div>
+  <div id="matchup"></div>
+  <div class="hdr-right">
+    <div id="filters">
+      <button data-mode="all" class="on">All</button>
+      <button data-mode="scoring">Scoring</button>
+      <button data-mode="redzone">Red zone</button>
+      <button data-mode="mine">My players</button>
+    </div>
+    <button id="btn-settings" title="Settings">Settings</button>
+    <div id="conn">starting</div>
+  </div>
+</header>
+
+<main>
+  <aside id="rail"></aside>
+  <section id="feed">
+    <div class="empty">Loading games&hellip;</div>
+  </section>
+</main>
+
+<!-- first-run Sleeper connect -->
+<div class="overlay" id="setup" hidden>
+  <div class="card">
+    <h2>Connect your Sleeper account</h2>
+    <p class="sub">
+      Pulls your league, lineup and live fantasy points so plays involving your
+      starters get flagged in the feed. Read-only and public &mdash; no password,
+      no login, nothing stored anywhere but this browser.
+    </p>
+    <label for="su-name">Sleeper username</label>
+    <input type="text" id="su-name" autocomplete="off" spellcheck="false" placeholder="username">
+    <div id="su-leagues"></div>
+    <div class="err" id="su-err"></div>
+    <div class="row">
+      <button id="su-skip">Skip</button>
+      <button id="su-go" class="primary">Connect</button>
+    </div>
+    <p class="note">
+      The play feed works without this. Skip it and you get every play from
+      every game, just with no fantasy layer.
+    </p>
+  </div>
+</div>
+
+<!-- settings -->
+<div class="overlay" id="settings" hidden>
+  <div class="card">
+    <h2>Settings</h2>
+    <p class="sub">Saved in this browser.</p>
+
+    <div class="toggle">
+      <div>
+        <div class="t-name">Sound</div>
+        <div class="t-desc">Chime on touchdowns, softer tone on red-zone entries.</div>
+      </div>
+      <button data-setting="sound"></button>
+    </div>
+
+    <div class="toggle">
+      <div>
+        <div class="t-name">Visual flash</div>
+        <div class="t-desc">New plays flash as they land; colour-coded by event.</div>
+      </div>
+      <button data-setting="visual"></button>
+    </div>
+
+    <div class="toggle">
+      <div>
+        <div class="t-name">Desktop notifications</div>
+        <div class="t-desc">
+          Touchdowns and your starters, shown even when this tab is in the
+          background. Only works while the tab stays open.
+        </div>
+      </div>
+      <button data-setting="notify"></button>
+    </div>
+
+    <label>Sleeper</label>
+    <div id="set-sleeper" class="diag"></div>
+
+    <label>Diagnostics</label>
+    <div id="set-diag" class="diag"></div>
+
+    <div class="row">
+      <button id="set-reset">Clear cached data</button>
+      <button id="set-close" class="primary">Done</button>
+    </div>
+    <p class="note">
+      Play data comes from ESPN&rsquo;s public endpoints and runs roughly 30
+      seconds behind the broadcast. Fantasy points come straight from Sleeper,
+      so they match your Sleeper app exactly.
+    </p>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
