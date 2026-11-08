@@ -36,6 +36,14 @@ exactly as before, with alerts while it is open.
 
 ## Setup
 
+Two routes. The CLI one below, or **[DEPLOY-BY-BROWSER.md](DEPLOY-BY-BROWSER.md)**
+to do it through the Cloudflare dashboard with no CLI and no API token - which
+is also the brief to hand a browser-driving agent. That route pastes
+`dist/gamezone-push.bundle.js`, the three modules flattened into one file,
+since the dashboard editor takes only one. Regenerate it with
+`node tools/bundle-worker.mjs` after any change to the Worker or to
+`js/bets-core.js`.
+
 **1. Generate the keys.** From the project root:
 
 ```bash

@@ -8,8 +8,22 @@
 // Whether an iPhone actually buzzes is the one thing only an iPhone can say.
 import { webcrypto as crypto } from 'node:crypto';
 import * as core from '../js/bets-core.js';
-import { authHeaders } from '../worker/src/vapid.js';
-import worker, { tick, normalizeGames } from '../worker/src/index.js';
+
+// The same suite runs against either the three real modules or the flattened
+// single-file bundle the Cloudflare dashboard needs:
+//
+//   node tools/worker-test.mjs                  # worker/src/
+//   GZ_WORKER=bundle node tools/worker-test.mjs # worker/dist/
+//
+// A bundler that drops a function would otherwise look fine until a Sunday.
+const BUNDLE = process.env.GZ_WORKER === 'bundle';
+const mod = await import(BUNDLE
+  ? '../worker/dist/gamezone-push.bundle.js'
+  : '../worker/src/index.js');
+const worker = mod.default;
+const { tick, normalizeGames } = mod;
+const { authHeaders } = BUNDLE ? mod : await import('../worker/src/vapid.js');
+console.log(`target: ${BUNDLE ? 'worker/dist/gamezone-push.bundle.js' : 'worker/src/index.js'}`);
 
 globalThis.crypto ??= crypto;
 
