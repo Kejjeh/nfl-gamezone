@@ -2,7 +2,8 @@
 
 A desktop version of Sleeper's SleeperZone: every play from every live NFL game
 in one feed, with your Sleeper starters flagged and your fantasy matchup running
-in the header.
+in the header — plus a live stats panel with league-wide leaders and a
+fantasy-scored box score for whichever game you click.
 
 Static site. No build step, no server, no API key, no dependencies. Push it to
 GitHub Pages and the browser talks to ESPN and Sleeper directly.
@@ -40,6 +41,7 @@ Then **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`
 | `site.api.espn.com/.../scoreboard` | scores, clock, down/distance, red zone | 6 s |
 | `sports.core.api.espn.com/.../plays` | play-by-play text | 10 s per live game |
 | `api.sleeper.app/v1/league/.../matchups` | live fantasy points | 25 s |
+| `site.api.espn.com/.../summary?event=` | box scores, scoring plays | 30 s per live game |
 | `site.api.espn.com/.../teams/{t}/roster` | player ID bridge | once a day |
 | `api.sleeper.app/v1/players/nfl` | player names and positions | once a day |
 
@@ -47,11 +49,15 @@ Roughly **6–7 KB/s** with a full Sunday slate, about 23 MB an hour.
 
 ### Two things worth knowing
 
-**Fantasy points are not computed here.** Sleeper's `matchups` endpoint already
-returns live per-player points under your league's own scoring settings (43 of
-them, in this case). Those numbers are read as truth, so the header always
-agrees with the Sleeper app exactly. ESPN supplies the narrative; Sleeper
-supplies the numbers.
+**Your matchup total is never computed here.** Sleeper's `matchups` endpoint
+already returns live per-player points under your league's own scoring settings
+(43 of them, in this case). Those numbers are read as truth, so the header
+always agrees with the Sleeper app exactly.
+
+The leaders board is the one place points *are* computed, because Sleeper only
+reports on players rostered in your league and the board covers every player in
+the NFL. That calculation is checked against Sleeper's own numbers rather than
+trusted — see [Stats and scoring](#stats-and-scoring).
 
 **Sleeper's `espn_id` field is not a usable player bridge.** It is populated for
 only 221 of 864 active fantasy-relevant players — about 26%. Ja'Marr Chase,
@@ -92,6 +98,9 @@ js/sleeper.js   league, rosters, live matchup, slim player cache
 js/bridge.js    ESPN athlete id  ->  Sleeper player id
 js/poller.js    interval scheduler with exponential backoff
 js/feed.js      cross-game merge, dedupe, filters, rendering
+js/boxscore.js  slate-wide player stat table and leader ranking
+js/scoring.js   fantasy points from stat lines, under league settings
+js/panel.js     the stats panel: leaders board and per-game box score
 js/rail.js      the game rail
 js/matchup.js   the header score strip
 js/alerts.js    WebAudio chimes, flash, desktop notifications
@@ -102,6 +111,52 @@ js/main.js      boot and wiring
 `site.api.espn.com/.../teams` is the one ESPN path tested that omits
 `Access-Control-Allow-Origin`, so a browser cannot read it. Every other
 endpoint used here sends `*`.
+
+## Stats and scoring
+
+Clicking a game swings the right-hand panel to that game's box score, with every
+skill-position and kicking line scored into fantasy points. The Leaders tab
+ranks the whole slate across nine categories — fantasy points, passing, rushing
+and receiving yards, receptions, targets, touchdowns, completions and kicking.
+
+Points come from **box-score aggregates, not play text**. A box score is already
+reconciled: yards, receptions and touchdowns are single numbers, so mapping them
+to scoring settings is arithmetic. Parsing the same information out of play
+narrative means re-deriving totals that ESPN has already totalled, and getting
+stat corrections wrong.
+
+**Field-goal distance is the one thing a box score cannot give.** It reports
+makes and attempts; most leagues, including this one, pay 3 points for a 25-yard
+kick and 5 for a 52-yard one. The first implementation read distances out of the
+play feed, where kicks read `N.Folk 31 yard field goal is GOOD` and carry a
+participant tagged `kicker`. That was wrong, and the validation check caught it:
+Evan McPherson scored 4 against Sleeper's 13. **The play feed is a rolling tail,
+not a complete log** — any kick made before the page loaded is simply not in it.
+
+Distances now come from `summary.scoringPlays`, which covers the whole game and
+is already in the payload fetched for box scores. Its field-goal entries carry
+no athlete ID, so the kicker is matched by name against the team's kicking rows.
+Misses need no distance at all, since `fgmiss` is flat: attempts minus makes is
+exact.
+
+**The scoring is checked, not assumed.** Settings → Diagnostics compares every
+computed total against Sleeper's own number for that player, split by game
+state:
+
+```
+scoring check vs Sleeper
+  final games: 17/17 exact
+  live games: 49/57 exact
+```
+
+Finished games are the real test. In a live game the two sources are sampled
+seconds apart, so a player who just gained yards reads higher here until
+Sleeper catches up. Live gaps are the size of a single play and almost always
+positive, which is what sampling lag looks like; a scoring bug would be a
+consistent offset that survived the whistle, and none does.
+
+Where no league is connected the board falls back to full-PPR defaults, so it
+still shows something sensible.
 
 ## Design notes
 
@@ -157,6 +212,12 @@ new plays are announced without stealing focus.
   fine. Do not ship this as a product.
 - **Desktop notifications need the tab open.** A static host cannot push.
 - **Audio needs one click first.** Browsers block WebAudio until a user gesture.
+- **Defensive stats are not scored.** The box score and leaders board cover
+  skill positions and kickers. Team defence scoring is a different shape - it is
+  per-roster rather than per-player - and is not computed; your matchup total
+  from Sleeper includes it regardless.
+- **Live fantasy points run slightly ahead of Sleeper's.** The box score updates
+  before Sleeper's tally does. The two agree exactly once a game is final.
 
 ## Privacy
 

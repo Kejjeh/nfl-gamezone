@@ -109,10 +109,12 @@ export async function refreshMatchups(week) {
   s.myStarters = new Set((mine.starters || []).filter(Boolean));
   s.oppStarters = new Set(opp ? (opp.starters || []).filter(Boolean) : []);
 
-  // Per-player live points, both sides, for the badge subtitles.
+  // Per-player live points for the badge subtitles. Taken from every roster in
+  // the league, not just this matchup: it costs nothing (the payload is already
+  // here) and it gives the scoring check a sample of a few hundred players
+  // instead of thirty.
   const pts = new Map();
-  for (const entry of [mine, opp]) {
-    if (!entry) continue;
+  for (const entry of m) {
     for (const [pid, v] of Object.entries(entry.players_points || {})) pts.set(pid, v);
   }
   s.pointsByPlayer = pts;

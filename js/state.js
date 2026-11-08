@@ -20,7 +20,13 @@ export const state = {
 
   bridge: { athleteToSleeper: new Map(), ready: false, unresolved: [] },
 
-  filters: { mode: 'all', gameId: null },
+  boxscores: new Map(),     // eventId -> normalized box score
+  playerStats: new Map(),   // espn athleteId -> aggregated line + fantasy points
+
+  panel: { open: true, tab: 'leaders', leaderCat: 'fpts' },
+
+  // mode = significance; types = play-type chips (empty set means no type filter)
+  filters: { mode: 'all', gameId: null, types: new Set() },
   settings: { sound: true, visual: true, notify: false },
 
   primed: false,           // suppress alerts until the backlog is ingested

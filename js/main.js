@@ -9,6 +9,8 @@ import * as feed from './feed.js';
 import * as rail from './rail.js';
 import * as matchup from './matchup.js';
 import * as alerts from './alerts.js';
+import * as boxscore from './boxscore.js';
+import * as panel from './panel.js';
 import { createPoller } from './poller.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -111,8 +113,28 @@ async function pollLeague() {
   }
 }
 
+// Box scores are ~19 KB gzipped per game. Live games refresh on a slower
+// cadence than plays; finished games are pulled once and then left alone,
+// since their stats will never change again.
+const boxDone = new Set();
+
+async function pollBoxscores() {
+  const live = liveGames().map((g) => g.id);
+  const finishedOnce = [...state.games.values()]
+    .filter((g) => g.state === 'post' && !boxDone.has(g.id))
+    .map((g) => g.id);
+  for (const id of finishedOnce) boxDone.add(id);
+
+  const targets = [...live, ...finishedOnce];
+  if (!targets.length) return;
+
+  await boxscore.refresh(targets);
+  panel.render();
+}
+
 const pollers = {
   scoreboard: createPoller('scoreboard', pollScoreboard, () => pace('scoreboard')),
+  boxscores: createPoller('boxscores', pollBoxscores, () => pace('boxscores')),
   plays: createPoller('plays', pollPlays, () => pace('plays')),
   matchups: createPoller('matchups', pollMatchups, () => pace('matchups')),
   league: createPoller('league', pollLeague, () => INTERVALS.league),
@@ -278,6 +300,29 @@ function renderDiag() {
         missing.map((m) => `${m.name} (${m.pos} ${m.team})`).join('\n  ')
       : 'all league starters linked');
   }
+
+  lines.push(`box scores ${state.boxscores.size} games · ${state.playerStats.size} stat lines`);
+
+  // Fantasy points on the leaders board are computed here from box-score
+  // totals, unlike the matchup strip which reads Sleeper's own numbers.
+  // Cross-check the two so a scoring bug shows up as a number, not a guess.
+  const v = boxscore.validate();
+  if (!v) {
+    lines.push('scoring check: needs Sleeper connected and box scores loaded');
+  } else {
+    const line = (label, b) => !b.n ? `  ${label}: none yet`
+      : `  ${label}: ${b.exact}/${b.n} exact` +
+        (b.off.length
+          ? '\n' + b.off.map((r) => `    ${r.name} ours ${r.mine} vs Sleeper ${r.theirs} (${r.diff > 0 ? '+' : ''}${r.diff})`).join('\n')
+          : '');
+    lines.push(
+      'scoring check vs Sleeper',
+      line('final games', v.final),
+      line('live games', v.live),
+      '  (live gaps are sampling lag — ESPN’s box score runs ahead of Sleeper’s tally)',
+    );
+  }
+
   el.textContent = lines.join('\n');
 }
 
@@ -351,11 +396,26 @@ async function boot() {
   rail.wire();
   wireSetup();
   wireSettings();
-  subscribe((what) => { if (what === 'filters') feed.rebuild(); });
+  // Selecting a game in the rail filters the feed and swings the panel to
+  // that game's box score; deselecting sends it back to the leaders board.
+  subscribe((what) => {
+    if (what !== 'filters') return;
+    if (state.filters.gameId) state.panel.tab = 'game';
+    else if (state.panel.tab === 'game') state.panel.tab = 'leaders';
+    feed.rebuild();
+    panel.render();
+  });
 
   espn.loadTeams();
+  panel.wire();
+  // Three columns need room; below that the panel overlays, so start it closed.
+  if (window.innerWidth < 1180) {
+    state.panel.open = false;
+    document.body.classList.add('panel-closed');
+  }
   feed.showSkeleton();
   rail.render();            // renders its own skeleton while empty
+  panel.render();
 
   // Ingest the existing backlog with alerts suppressed, then go live.
   try {
@@ -370,6 +430,7 @@ async function boot() {
   pollers.scoreboard.start();
   pollers.plays.start();
   pollers.matchups.start();
+  pollers.boxscores.start();
 
   initSleeper();
   initBridge();

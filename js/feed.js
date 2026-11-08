@@ -31,6 +31,35 @@ const LONG_BY_NATURE = /^(kickoff|punt)$/i;
 const isRedZonePlay = (p) =>
   (p.endYTE != null && p.endYTE <= 20) || (p.startYTE != null && p.startYTE <= 20);
 
+// Play-type chips. ESPN's type vocabulary is granular (Rush, Pass Reception,
+// Pass Incompletion, Sack, Pass Interception Return, ...), so these group it
+// into the categories a viewer actually thinks in.
+export const PLAY_TYPES = {
+  rush: { label: 'Rush', test: (p) => /^(rush|rushing touchdown)$/i.test(p.type) },
+  pass: {
+    label: 'Pass',
+    test: (p) => /^(pass reception|pass incompletion|passing touchdown)$/i.test(p.type),
+  },
+  sack: { label: 'Sack', test: (p) => /sack/i.test(p.type) },
+  turnover: {
+    label: 'Turnover',
+    test: (p) => p.isTurnover || /interception|fumble recovery \(opponent\)/i.test(p.type),
+  },
+  scoring: { label: 'Score', test: (p) => p.scoringPlay },
+  penalty: { label: 'Penalty', test: (p) => p.isPenalty || /^penalty$/i.test(p.type) },
+  special: {
+    label: 'Special',
+    test: (p) => /punt|kickoff|field goal|extra point|kick return/i.test(p.type),
+  },
+};
+
+function matchesTypes(p) {
+  const sel = state.filters.types;
+  if (!sel || !sel.size) return true;
+  for (const key of sel) if (PLAY_TYPES[key]?.test(p)) return true;
+  return false;
+}
+
 // log < note < key < score
 function tierOf(p) {
   if (p.scoringPlay) return 'score';
@@ -47,6 +76,7 @@ function passes(p) {
   if (DROP.test(p.type)) return false;
   const f = state.filters;
   if (f.gameId && p.eventId !== f.gameId) return false;
+  if (!matchesTypes(p)) return false;
   switch (f.mode) {
     case 'scoring': return p.scoringPlay;
     case 'redzone': return isRedZonePlay(p);
@@ -275,6 +305,31 @@ export function wire() {
     for (const b of bar.children) {
       b.setAttribute('aria-pressed', String(b === btn));
     }
+    document.getElementById('feed').scrollTop = 0;
+    rebuild();
+  });
+
+  // Play-type chips: multi-select, none selected means no type filter.
+  const types = document.getElementById('type-filters');
+  types.innerHTML = Object.entries(PLAY_TYPES).map(([k, t]) =>
+    `<button type="button" class="chip" data-type="${k}" aria-pressed="false">${t.label}</button>`
+  ).join('') + '<button type="button" class="chip chip-clear" id="type-clear" hidden>Clear</button>';
+
+  types.addEventListener('click', (e) => {
+    const clear = e.target.closest('#type-clear');
+    if (clear) {
+      state.filters.types.clear();
+    } else {
+      const btn = e.target.closest('[data-type]');
+      if (!btn) return;
+      const k = btn.dataset.type;
+      if (state.filters.types.has(k)) state.filters.types.delete(k);
+      else state.filters.types.add(k);
+    }
+    for (const b of types.querySelectorAll('[data-type]')) {
+      b.setAttribute('aria-pressed', String(state.filters.types.has(b.dataset.type)));
+    }
+    document.getElementById('type-clear').hidden = state.filters.types.size === 0;
     document.getElementById('feed').scrollTop = 0;
     rebuild();
   });

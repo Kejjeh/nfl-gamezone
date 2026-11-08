@@ -130,9 +130,12 @@ export async function fetchAllPlays(eventId) {
 function normalizePlay(p, eventId) {
   try {
     if (!p?.id) return null;
-    const athleteIds = (p.participants || [])
-      .map((x) => idFromRef(x.athlete?.$ref))
-      .filter(Boolean);
+    // Roles matter: a field goal play lists kicker, snapper and holder, and
+    // only the kicker should be credited with the points.
+    const parts = (p.participants || [])
+      .map((x) => ({ id: idFromRef(x.athlete?.$ref), role: x.type || null }))
+      .filter((x) => x.id);
+    const athleteIds = parts.map((x) => x.id);
 
     const typeText = p.type?.text || '';
     const isTD = !!p.scoringPlay && (Number(p.scoreValue) >= 6 || /touchdown/i.test(typeText));
@@ -155,6 +158,7 @@ function normalizePlay(p, eventId) {
       homeScore: Number(p.homeScore) || 0,
       teamId: idFromRef(p.team?.$ref),
       athleteIds,
+      participants: parts,
       // Field position, present on every play observed. Drives the red-zone
       // filter without needing the game-level situation flag.
       startYTE: p.start?.yardsToEndzone ?? null,
@@ -168,6 +172,75 @@ function normalizePlay(p, eventId) {
     console.warn('[espn] bad play payload', err);
     return null;
   }
+}
+
+/* ---------- box score ---------- */
+
+// The game summary carries a full, already-parsed box score: passing, rushing,
+// receiving, kicking and the rest, keyed by ESPN athlete id. ~19 KB gzipped.
+export async function fetchSummary(eventId) {
+  const d = await fetchJSON(`${ESPN_SITE}/summary?event=${eventId}`);
+  return normalizeBoxscore(d, eventId);
+}
+
+// Made field goals, by team, with their distances.
+//
+// The stat line gives only made/attempts, and fantasy scoring buckets makes by
+// distance, so the distance has to come from somewhere else. It cannot come
+// from the play feed: that is a rolling tail, so a field goal kicked before the
+// page loaded is simply not there. `summary.scoringPlays` covers the whole game
+// and its text carries the distance ("Brandon Aubrey 45 Yd Field Goal"), which
+// makes it the only complete source in a payload already being fetched.
+//
+// athletesInvolved is empty on field-goal entries, so there is no athlete ID to
+// key on and the kicker's name has to be read out of the text.
+const FG_TEXT = /^(.+?)\s+(\d+)\s*Yd\s+Field\s+Goal/i;
+
+function madeFieldGoals(d) {
+  const byTeam = new Map();
+  for (const p of d?.scoringPlays || []) {
+    if ((p.type?.abbreviation || '') !== 'FG') continue;
+    const m = FG_TEXT.exec(p.text || '');
+    if (!m) continue;
+    const tid = String(p.team?.id ?? '');
+    if (!byTeam.has(tid)) byTeam.set(tid, []);
+    byTeam.get(tid).push({ name: m[1].trim(), distance: Number(m[2]) });
+  }
+  return byTeam;
+}
+
+function normalizeBoxscore(d, eventId) {
+  const out = { eventId: String(eventId), teams: [], fetched: Date.now() };
+  const fgByTeam = madeFieldGoals(d);
+  for (const group of d?.boxscore?.players || []) {
+    const team = {
+      id: String(group.team?.id ?? ''),
+      abbr: group.team?.abbreviation || '??',
+      categories: {},
+      fgMade: fgByTeam.get(String(group.team?.id ?? '')) || [],
+    };
+    for (const cat of group.statistics || []) {
+      const keys = cat.keys || [];
+      const labels = cat.labels || [];
+      const rows = [];
+      for (const a of cat.athletes || []) {
+        const stats = a.stats || [];
+        const byKey = {};
+        keys.forEach((k, i) => { byKey[k] = stats[i]; });
+        rows.push({
+          id: String(a.athlete?.id ?? ''),
+          name: a.athlete?.displayName || '',
+          short: a.athlete?.shortName || '',
+          pos: a.athlete?.position?.abbreviation || '',
+          stats: byKey,
+          raw: stats,
+        });
+      }
+      team.categories[cat.name] = { keys, labels, rows };
+    }
+    out.teams.push(team);
+  }
+  return out;
 }
 
 /* ---------- team rosters: the athleteId -> name/team/pos bridge source ---------- */

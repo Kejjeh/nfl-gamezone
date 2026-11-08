@@ -12,6 +12,7 @@ export const INTERVALS = {
   scoreboard: 6000,
   plays:     10000,
   matchups:  25000,
+  boxscores: 30000,   // ~19 KB gzipped per game; stats move slower than plays
   league:   600000,
   idle:      60000,   // used for every poller when nothing is live
 };
