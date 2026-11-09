@@ -30,11 +30,59 @@ const json = (body, env, status = 200) =>
   });
 
 // Subscription endpoints are long and contain a token, so they are hashed
-// rather than used as keys directly.
-async function keyFor(endpoint) {
+// rather than used as identifiers directly.
+async function idFor(endpoint) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
-  return `sub:${[...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+  return [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// Every subscription lives in ONE record, keyed by endpoint hash inside it.
+//
+// It used to be one KV key each, which meant a list() on every cron tick to
+// find them. The free plan allows 1,000 list requests a day and the cron fires
+// 1,440 times, so list operations ran out at 16:40 UTC every day and the
+// Worker then did nothing at all until the quota reset. One key means one read
+// per tick, no list, and a second phone that costs nothing.
+const SUBS_KEY = 'subs:all';
+
+async function loadSubs(env) {
+  const all = await read(env, SUBS_KEY);
+  if (all) return all;
+  return migrateSubs(env);
+}
+
+// Deployments before 2026-11-09 stored one key per subscription. Fold them in,
+// so nobody has to re-enable alerts on their phone. The list() below runs only
+// while SUBS_KEY is absent, and the record is written even when it is empty, so
+// the next tick reads it instead of listing again.
+//
+// A failure here throws on purpose. Writing an empty record because a list
+// failed would silently discard a working subscription; the cron just tries
+// again next minute.
+async function migrateSubs(env) {
+  const all = {};
+  const legacy = [];
+  let cursor;
+  do {
+    const page = await env.GZ.list({ prefix: 'sub:', cursor });
+    for (const k of page.keys) {
+      const rec = await read(env, k.name);
+      if (rec?.subscription?.endpoint) {
+        all[await idFor(rec.subscription.endpoint)] = rec;
+        legacy.push(k.name);
+      }
+    }
+    cursor = page.cursor;
+    if (page.list_complete) break;
+  } while (cursor);
+  await env.GZ.put(SUBS_KEY, JSON.stringify(all));
+  for (const k of legacy) await env.GZ.delete(k);
+  return all;
+}
+
+// Always write, even when the record is empty: an absent key would send the
+// next tick back into migrateSubs and its list().
+const saveSubs = (env, all) => env.GZ.put(SUBS_KEY, JSON.stringify(all));
 
 export default {
   async fetch(request, env) {
@@ -62,8 +110,8 @@ export default {
     if (url.pathname === '/subscribe') {
       const sub = body.subscription;
       if (!sub?.endpoint) return json({ error: 'no subscription' }, env, 400);
-      const key = await keyFor(sub.endpoint);
-      await env.GZ.put(key, JSON.stringify({
+      const all = await loadSubs(env);
+      all[await idFor(sub.endpoint)] = {
         subscription: sub,
         bets: Array.isArray(body.bets) ? body.bets : [],
         // Start from the current numbers, so switching alerts on does not
@@ -71,17 +119,18 @@ export default {
         lastSeen: {},
         primed: false,
         updated: Date.now(),
-      }));
+      };
+      await saveSubs(env, all);
       return json({ ok: true }, env);
     }
 
     if (url.pathname === '/bets') {
-      const key = await keyFor(body.endpoint || '');
-      const rec = await read(env, key);
+      const all = await loadSubs(env);
+      const rec = all[await idFor(body.endpoint || '')];
       if (!rec) return json({ error: 'unknown subscription' }, env, 404);
       rec.bets = Array.isArray(body.bets) ? body.bets : [];
       rec.updated = Date.now();
-      await env.GZ.put(key, JSON.stringify(rec));
+      await saveSubs(env, all);
       return json({ ok: true, bets: rec.bets.length }, env);
     }
 
@@ -89,36 +138,42 @@ export default {
     // notification - without waiting for a bet to move. It only ever sends to
     // an endpoint already in KV, so it cannot be pointed at a stranger.
     if (url.pathname === '/test') {
-      const key = await keyFor(body.endpoint || '');
-      const rec = await read(env, key);
+      const all = await loadSubs(env);
+      const id = await idFor(body.endpoint || '');
+      const rec = all[id];
       if (!rec) return json({ error: 'unknown subscription' }, env, 404);
       rec.pending = {
         title: 'GameZone test',
         body: 'Phone alerts are working. Real ones look like this.',
         tag: 'gz-test',
       };
-      await env.GZ.put(key, JSON.stringify(rec));
+      await saveSubs(env, all);
       const out = await sendPush(rec.subscription.endpoint, env);
-      if (out.state === 'gone') await env.GZ.delete(key);
+      if (out.state === 'gone') {
+        delete all[id];
+        await saveSubs(env, all);
+      }
       return json({ ok: out.state === 'ok', state: out.state, detail: out.detail },
         env, out.state === 'ok' ? 200 : 502);
     }
 
     // The service worker asks for the message that belongs to this push.
     if (url.pathname === '/pending') {
-      const key = await keyFor(body.endpoint || '');
-      const rec = await read(env, key);
+      const all = await loadSubs(env);
+      const rec = all[await idFor(body.endpoint || '')];
       if (!rec) return json({ error: 'unknown subscription' }, env, 404);
       const pending = rec.pending || null;
       if (pending) {
         rec.pending = null;
-        await env.GZ.put(key, JSON.stringify(rec));
+        await saveSubs(env, all);
       }
       return json(pending || { title: 'GameZone', body: 'Your bets moved.' }, env);
     }
 
     if (url.pathname === '/unsubscribe') {
-      await env.GZ.delete(await keyFor(body.endpoint || ''));
+      const all = await loadSubs(env);
+      delete all[await idFor(body.endpoint || '')];
+      await saveSubs(env, all);
       return json({ ok: true }, env);
     }
 
@@ -139,9 +194,9 @@ async function read(env, key) {
 /* ------------------------------------------------------------------ tick */
 
 export async function tick(env) {
-  const subs = await listSubs(env);
-  if (!subs.length) return { skipped: 'no subscriptions' };
-
+  // The scoreboard comes FIRST, before any KV call. A tick on a Tuesday, or at
+  // 3am on a Monday, has to cost nothing at all: the free plan allows 1,000
+  // writes and 1,000 list requests a day, and this cron fires 1,440 times.
   const scoreboard = await fetchJSON(`${ESPN}/scoreboard`);
   const games = normalizeGames(scoreboard);
   const live = games.filter((g) => g.state === 'in');
@@ -149,15 +204,9 @@ export async function tick(env) {
   // Nothing is moving, so nothing can have changed.
   if (!live.length) return { skipped: 'no live games' };
 
-  // Only pull box scores for games that actually matter to somebody's bet.
-  const wanted = new Set();
-  for (const { rec } of subs) {
-    for (const bet of rec.bets || []) {
-      for (const leg of bet.legs || []) {
-        if (leg.athleteId) wanted.add(String(leg.athleteId));
-      }
-    }
-  }
+  const all = await loadSubs(env);
+  const ids = Object.keys(all);
+  if (!ids.length) return { skipped: 'no subscriptions' };
 
   const stats = {};
   const eventOf = {};
@@ -177,19 +226,46 @@ export async function tick(env) {
   }
 
   const byId = Object.fromEntries(games.map((g) => [g.id, g]));
+  const world = { stats, eventOf, byId, games };
+  const before = JSON.stringify(all);
+  const sending = [];
   const results = [];
 
-  for (const { key, rec } of subs) {
+  for (const id of ids) {
     try {
-      results.push(await handleSub(env, key, rec, { stats, eventOf, byId, games }));
+      const out = evaluate(all[id], world);
+      results.push(out);
+      if (out.push) sending.push(id);
     } catch (err) {
-      console.log('sub failed', key, String(err));
+      console.log('sub failed', id, String(err));
     }
   }
-  return { live: live.length, subs: subs.length, results };
+
+  // One write for every device, and only when a tracked number actually moved.
+  // This used to be an unconditional put() per subscription per live minute,
+  // which is what emptied the daily write quota.
+  const wrote = JSON.stringify(all) !== before;
+  if (wrote) await saveSubs(env, all);
+
+  // The message has to be stored before the push goes out: the service worker
+  // wakes and immediately asks for it.
+  let dropped = false;
+  for (const id of sending) {
+    const out = await sendPush(all[id].subscription.endpoint, env);
+    if (out.state === 'gone') {
+      delete all[id];
+      dropped = true;
+    }
+  }
+  if (dropped) await saveSubs(env, all);
+
+  return { live: live.length, subs: ids.length, wrote, results };
 }
 
-async function handleSub(env, key, rec, world) {
+// Decides what this subscription should be told and moves its baseline on.
+// Deliberately free of KV: every operation for the whole tick lives in tick(),
+// so the per-day budget can be read off one function.
+function evaluate(rec, world) {
   const ctx = {
     statsFor: (athleteId) => world.stats[String(athleteId)] || null,
     gameFor: (leg) => {
@@ -209,15 +285,11 @@ async function handleSub(env, key, rec, world) {
   // The first run after subscribing only records where things stand.
   if (!rec.primed) {
     rec.primed = true;
-    await env.GZ.put(key, JSON.stringify(rec));
-    return { key, primed: true };
+    return { primed: true };
   }
 
   const worth = events.filter((e) => e.priority >= 1);
-  if (!worth.length) {
-    await env.GZ.put(key, JSON.stringify(rec));
-    return { key, events: events.length, sent: false };
-  }
+  if (!worth.length) return { events: events.length, sent: false };
 
   worth.sort((a, b) => b.priority - a.priority);
   const top = worth[0];
@@ -228,26 +300,7 @@ async function handleSub(env, key, rec, world) {
     body: core.describeEvent(top) + more,
     tag: `gz-${top.betId}`,
   };
-  await env.GZ.put(key, JSON.stringify(rec));
-
-  const out = await sendPush(rec.subscription.endpoint, env);
-  if (out.state === 'gone') await env.GZ.delete(key);
-  return { key, sent: out.state, body: rec.pending.body };
-}
-
-async function listSubs(env) {
-  const out = [];
-  let cursor;
-  do {
-    const page = await env.GZ.list({ prefix: 'sub:', cursor });
-    for (const k of page.keys) {
-      const rec = await read(env, k.name);
-      if (rec?.subscription?.endpoint) out.push({ key: k.name, rec });
-    }
-    cursor = page.cursor;
-    if (page.list_complete) break;
-  } while (cursor);
-  return out;
+  return { push: true, body: rec.pending.body };
 }
 
 /* ------------------------------------------------------------------ espn */

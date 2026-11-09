@@ -41,20 +41,40 @@ const ok = (name, cond, detail = '') => {
 
 /* ------------------------------------------------------------- fake KV */
 
+// Counts every operation. The free plan's ceilings are per operation type per
+// day - 1,000 writes, 1,000 lists, 100,000 reads - and the cron fires 1,440
+// times, so "does a push go out" is not enough to know this Worker works.
 const makeKV = () => {
   const m = new Map();
+  const ops = { get: 0, put: 0, delete: 0, list: 0 };
   return {
     m,
-    get: async (k) => (m.has(k) ? m.get(k) : null),
-    put: async (k, v) => { m.set(k, v); },
-    delete: async (k) => { m.delete(k); },
-    list: async ({ prefix = '', cursor } = {}) => ({
-      keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
-      list_complete: true,
-      cursor: undefined,
-    }),
+    ops,
+    reset: () => { for (const k of Object.keys(ops)) ops[k] = 0; },
+    get: async (k) => { ops.get += 1; return m.has(k) ? m.get(k) : null; },
+    put: async (k, v) => { ops.put += 1; m.set(k, v); },
+    delete: async (k) => { ops.delete += 1; m.delete(k); },
+    list: async ({ prefix = '', cursor } = {}) => {
+      ops.list += 1;
+      return {
+        keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+        list_complete: true,
+        cursor: undefined,
+      };
+    },
   };
 };
+
+// Every subscription lives in one KV record. Tests reach into it to rewind a
+// baseline or to check that a dead one was dropped.
+const storedSubs = (KV) => JSON.parse(KV.m.get('subs:all') || '{}');
+const subCount = (KV) => Object.keys(storedSubs(KV)).length;
+const onlySub = (KV) => {
+  const all = storedSubs(KV);
+  const id = Object.keys(all)[0];
+  return id ? { all, id, rec: all[id] } : null;
+};
+const saveSubsRaw = (KV, all) => { KV.m.set('subs:all', JSON.stringify(all)); };
 
 /* --------------------------------------------------- VAPID, for real */
 
@@ -168,7 +188,7 @@ if (target) {
     body: JSON.stringify({ subscription: { endpoint, keys: { p256dh: 'x', auth: 'y' } }, bets: [bet] }),
   }), env);
   check('subscribe accepted', res.status, 200);
-  ok('subscription stored', KV.m.size === 1, `${KV.m.size} keys`);
+  ok('subscription stored', subCount(KV) === 1, `${subCount(KV)} subscriptions`);
 
   // first tick only primes
   const t1 = await tick(env);
@@ -179,12 +199,12 @@ if (target) {
 
   if (!t1.skipped) {
     // Rewind the stored baseline so the next tick sees movement.
-    const key = [...KV.m.keys()][0];
-    const rec = JSON.parse(KV.m.get(key));
+    const { all, id, rec } = onlySub(KV);
     const legKey = Object.keys(rec.lastSeen).find((k) => k.startsWith('b1:'));
     ok('baseline recorded the leg', !!legKey, JSON.stringify(rec.lastSeen).slice(0, 120));
     rec.lastSeen[legKey] = Math.max(0, target.yds - 30);
-    KV.m.set(key, JSON.stringify(rec));
+    all[id] = rec;
+    saveSubsRaw(KV, all);
 
     const t2 = await tick(env);
     ok('second tick sent a push', pushes.length === 1, JSON.stringify(t2).slice(0, 200));
@@ -239,16 +259,17 @@ if (target) {
     if (u.startsWith('https://fake.push.test/')) return new Response('', { status: 410 });
     return realFetch(url, init);
   };
-  const key = [...KV.m.keys()][0];
-  if (key) {
-    const rec = JSON.parse(KV.m.get(key));
+  const stored = onlySub(KV);
+  if (stored) {
+    const { all, id, rec } = stored;
     const lk = Object.keys(rec.lastSeen).find((k) => k.startsWith('b1:'));
     if (lk) {
       rec.lastSeen[lk] = 0;
       rec.primed = true;
-      KV.m.set(key, JSON.stringify(rec));
+      all[id] = rec;
+      saveSubsRaw(KV, all);
       await tick(env);
-      check('a 410 drops the subscription', KV.m.size, 0);
+      check('a 410 drops the subscription', subCount(KV), 0);
     }
   }
   globalThis.fetch = realFetch;
@@ -281,6 +302,123 @@ if (target) {
     body: JSON.stringify({ endpoint: 'https://nope/', bets: [] }),
   }), env);
   check('unknown subscription is rejected', unknown.status, 404);
+}
+
+/* -------------------------------------------------- KV budget per tick */
+
+// The Worker did one KV list() per cron tick, before checking whether any game
+// was live. 1,440 ticks a day against a 1,000/day list ceiling meant it died
+// every day at 16:40 UTC, games or not. These assertions are the budget, and a
+// push arriving is not evidence the budget is intact.
+{
+  const prevFetch = globalThis.fetch;
+  const ENDPOINT = 'https://fake.push.test/kv-budget-1';
+  const ENDPOINT2 = 'https://fake.push.test/kv-budget-2';
+  const secrets = { VAPID_PRIVATE_JWK, VAPID_PUBLIC_KEY, VAPID_SUBJECT: 'https://example.test/' };
+
+  const scoreboard = (state) => ({
+    events: [{
+      id: '401999', date: new Date().toISOString(), status: { type: { state } },
+      competitions: [{ competitors: [
+        { homeAway: 'home', team: { abbreviation: 'KC' }, score: '7' },
+        { homeAway: 'away', team: { abbreviation: 'BUF' }, score: '3' },
+      ] }],
+    }],
+  });
+
+  // No network: these tests are about operation counts, so the upstream has to
+  // be identical on every run.
+  const stub = (state) => {
+    globalThis.fetch = async (url) => {
+      const u = String(url?.url || url);
+      if (u.includes('/scoreboard')) return new Response(JSON.stringify(scoreboard(state)));
+      if (u.includes('/summary')) return new Response(JSON.stringify({ boxscore: { players: [] } }));
+      if (u.startsWith('https://fake.push.test/')) return new Response('', { status: 201 });
+      throw new Error(`unexpected fetch ${u}`);
+    };
+  };
+
+  const post = (env, path, body) => worker.fetch(new Request(`https://w${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }), env);
+
+  // 1. Nothing live: the tick must cost no KV operations whatsoever.
+  {
+    const KV = makeKV();
+    stub('post');
+    const out = await tick({ GZ: KV, ...secrets });
+    check('quiet tick skips before touching KV', out.skipped, 'no live games');
+    check('quiet tick costs no KV operations', KV.ops, { get: 0, put: 0, delete: 0, list: 0 });
+  }
+
+  // 2. Live games, no subscribers: one read per tick and never a list.
+  {
+    const KV = makeKV();
+    const env = { GZ: KV, ...secrets };
+    stub('in');
+    await tick(env);
+    KV.reset();
+    await tick(env); await tick(env); await tick(env);
+    check('steady-state ticks never list', KV.ops.list, 0);
+    check('steady-state ticks write nothing when nobody subscribes', KV.ops.put, 0);
+    ok('steady-state ticks read at most once each', KV.ops.get <= 3, JSON.stringify(KV.ops));
+  }
+
+  // 3. A subscription stored by the old one-key-per-endpoint build is folded
+  //    into the single record, so nobody has to re-enable alerts by hand.
+  {
+    const KV = makeKV();
+    const env = { GZ: KV, ...secrets };
+    KV.m.set('sub:0123456789abcdef', JSON.stringify({
+      subscription: { endpoint: ENDPOINT, keys: { p256dh: 'x', auth: 'y' } },
+      bets: [], lastSeen: {}, primed: true, updated: Date.now(),
+    }));
+    stub('in');
+    await tick(env);
+    ok('legacy key is folded into one record', KV.m.has('subs:all'), [...KV.m.keys()].join(','));
+    check('the migrated subscription survived', subCount(KV), 1);
+    check('the legacy key is cleaned up', KV.m.has('sub:0123456789abcdef'), false);
+    KV.reset();
+    await tick(env);
+    check('migration runs once, not every tick', KV.ops.list, 0);
+  }
+
+  // 4. The one that cost the quota: a tick where no tracked stat moved must
+  //    not write. This was an unconditional put() on every live minute.
+  {
+    const KV = makeKV();
+    const env = { GZ: KV, ...secrets };
+    stub('in');
+    await post(env, '/subscribe', {
+      subscription: { endpoint: ENDPOINT, keys: { p256dh: 'x', auth: 'y' } },
+      bets: [{ id: 'b1', book: 'test', stake: 10, odds: -110, legs: [
+        { id: 'l1', market: 'rec_yds', line: 50, athleteId: '999999',
+          playerName: 'Nobody', eventId: '401999' }] }],
+    });
+    await tick(env);            // primes the baseline
+    KV.reset();
+    await tick(env);
+    check('an unchanged tick writes nothing', KV.ops.put, 0);
+    check('an unchanged tick reads once', KV.ops.get, 1);
+    check('an unchanged tick never lists', KV.ops.list, 0);
+  }
+
+  // 5. A second device must not double the write bill.
+  {
+    const KV = makeKV();
+    const env = { GZ: KV, ...secrets };
+    stub('in');
+    for (const e of [ENDPOINT, ENDPOINT2]) {
+      await post(env, '/subscribe', { subscription: { endpoint: e, keys: { p256dh: 'x', auth: 'y' } }, bets: [] });
+    }
+    check('both devices are in one record', subCount(KV), 2);
+    KV.reset();
+    await tick(env);
+    ok('priming two devices takes one write, not one each', KV.ops.put <= 1, JSON.stringify(KV.ops));
+  }
+
+  globalThis.fetch = prevFetch;
 }
 
 console.log(`${pass} passed, ${failures.length} failed`);

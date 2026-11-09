@@ -25,10 +25,37 @@ about whether a leg has hit.
 
 ## Cost
 
-Cloudflare's free plan covers it. Cron Triggers are included, the limit is
-100,000 requests a day against a few hundred here, and each run makes about 16
-subrequests against a free-plan ceiling of 50. KV's free tier allows 1,000
-writes a day; a four-hour slate at one run a minute is 240.
+Cloudflare's free plan covers it, but only because of the order the tick does
+things in. The ceilings that matter are per operation type per day, and they
+reset at 00:00 UTC - 7pm ET during the season, so a Sunday's afternoon slate
+and Sunday Night Football draw on two different days' budgets.
+
+| Operation | Free plan | A full Sunday here |
+|---|---|---|
+| KV list | 1,000/day | **none at all** |
+| KV write | 1,000/day | one per minute in which a tracked number moved: tens, not hundreds |
+| KV read | 100,000/day | one per live minute, about 650 |
+| Worker requests | 100,000/day | 1,440 cron runs plus a few route calls |
+| Subrequests per run | 50 | about 16 on a full slate |
+
+Two things keep it there, and both are load-bearing:
+
+- **The scoreboard is fetched before KV is touched at all**, so a tick with
+  nothing live costs nothing. Monday through Saturday is free.
+- **Every subscription lives in one KV record**, written only when a tracked
+  number actually moved. A second phone costs nothing.
+
+The first version got this wrong, and it is worth recording why. It called
+`list()` to find the subscriptions *before* checking whether any game was live,
+spending 1,440 list operations a day against a ceiling of 1,000 - games or not.
+List operations ran out at 16:40 UTC every day, `list()` then failed, and the
+cron did nothing until the quota reset. It also wrote once per subscription per
+live minute whether anything had changed or not. The note that used to sit here
+read "a four-hour slate at one run a minute is 240", which counted only writes,
+only during games, and only for one device.
+
+`tools/worker-test.mjs` now asserts the operation counts rather than only that
+a push goes out, so this cannot come back quietly.
 
 Nothing here needs a paid plan, and nothing bills by usage. If you would rather
 not create a Cloudflare account, skip the whole directory — the site works
@@ -114,14 +141,15 @@ get a push accepted.
 
 ```
 cron (1 min)
-  └─ ESPN scoreboard ──> live games
-        └─ summary per live game ──> statsFromSummary()  [bets-core]
-              └─ per subscription: diffLegs(bets, ctx, lastSeen)  [bets-core]
-                    └─ something worth saying?
-                          ├─ store the message under the subscription
-                          └─ send an EMPTY push
-                                └─ service worker wakes, POSTs /pending,
-                                   gets the message, shows the notification
+  └─ ESPN scoreboard ──> live games       [no KV yet: a quiet tick costs nothing]
+        └─ every subscription, from ONE KV record                     [1 read]
+              └─ summary per live game ──> statsFromSummary()  [bets-core]
+                    └─ per subscription: diffLegs(bets, ctx, lastSeen)  [bets-core]
+                          └─ did a tracked number move?
+                                ├─ one KV write covering every subscription
+                                └─ send an EMPTY push to each one with news
+                                      └─ service worker wakes, POSTs /pending,
+                                         gets the message, shows the notification
 ```
 
 **The push carries no payload.** Encrypting one (RFC 8291) means ECDH against
