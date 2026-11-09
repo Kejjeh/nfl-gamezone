@@ -78,6 +78,9 @@ Load these with the Skill tool when the situation comes up; the user does not ne
 |---|---|
 | A play is missing, a starter isn't flagged, Diagnostics shows a scoring mismatch on a final game, a poller stalls | `diagnosing-bugs` |
 | Changing `scoring.js`, `bridge.js`, `boxscore.js` or ESPN/Sleeper parsing, where a wrong number or a silently unlinked player looks fine on screen | `sop-fail-loud` |
+| Touching the slip parser in `bets-core.js`, or adding a sportsbook format | `sop-parse-real-samples` |
+| Changing what ESPN or Sleeper endpoints are relied on, or the bridge's matching key | `sop-verify-upstream` |
+| Anything in `worker/` or `js/push.js`, where only the phone can confirm it worked | `sop-prove-remote-delivery` |
 | Proving a feed, panel or phone-layout change works in the running page (`gamezone` launch config, `?week=8` when nothing is live) | `run` |
 | Extending tests beyond bets/worker (e.g. `scoring.js` against known Sleeper totals) | `engineering:testing-strategy` |
 | Fixing a scoring or bridge bug once a test harness exists | `tdd` |
