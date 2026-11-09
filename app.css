@@ -182,6 +182,15 @@ header {
   transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
 .icon-btn:hover { color: var(--fg); background: var(--surface-2); }
+
+/* The panel toggle is the only icon button that holds a state, and it has to
+   show it: below 1180px the panel is hidden by default, so an unlit button
+   was the only difference between "closed" and "this app has no stats panel".
+   Same treatment as a pressed chip, so "on" reads the same everywhere. */
+.icon-btn[aria-pressed="true"] {
+  color: #a8ccff;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
 .icon-btn svg { width: 16px; height: 16px; }
 
 #conn {
@@ -208,6 +217,25 @@ header {
   align-items: baseline;
   gap: var(--s2);
   min-width: 0;
+}
+/* Name over "how much is left to play". The counts answer the question the
+   score alone cannot: whether a lead is safe. Column, so the strip stays one
+   row; .mu-side aligns on the first baseline, so the name still lines up with
+   the points. */
+.mu-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  max-width: 170px;
+}
+.mu-left {
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mu-label {
   font-size: var(--t-sm);
@@ -259,7 +287,9 @@ header {
 .mu-empty button:hover { text-decoration: underline; }
 
 @media (max-width: 1240px) { .mu-meta { display: none; } }
-@media (max-width: 1040px) { .mu-label { max-width: 76px; } }
+/* The name may clip; the counts must not, so the column gets more room
+   than the name inside it. */
+@media (max-width: 1040px) { .mu-label { max-width: 76px; } .mu-who { max-width: 124px; } }
 
 /* =============================================================================
    Layout
@@ -664,6 +694,15 @@ body.panel-closed #panel { display: none; }
   margin-bottom: var(--s3);
 }
 .ld-chips .chip { font-size: var(--t-xs); padding: 3px 8px; }
+
+/* The position row is a second cut of the same board, so it sits tighter and
+   quieter than the category row above it rather than competing with it. */
+.ld-chips.ld-pos { gap: 4px; margin-top: calc(var(--s3) * -1 + 2px); }
+.ld-chips.ld-pos .chip {
+  padding: 2px 7px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
 
 .ld { list-style: none; margin: 0; padding: 0; }
 .ld-row {
@@ -1312,6 +1351,7 @@ body.panel-closed #panel { display: none; }
    bottom bar was taking 40% of it. Collapse to one header row and a shorter
    bar: the brand is decoration, the score is not. */
 @media (max-height: 500px) and (max-width: 900px) {
+  .mu-left { display: none; }
   header {
     flex-wrap: nowrap;
     padding-top: calc(4px + env(safe-area-inset-top));

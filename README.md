@@ -117,7 +117,24 @@ endpoint used here sends `*`.
 Clicking a game swings the right-hand panel to that game's box score, with every
 skill-position and kicking line scored into fantasy points. The Leaders tab
 ranks the whole slate across nine categories — fantasy points, passing, rushing
-and receiving yards, receptions, targets, touchdowns, completions and kicking.
+and receiving yards, receptions, targets, touchdowns, completions and kicking —
+and cuts any of them by fantasy position: **All · QB · RB · WR · TE · FLEX · K**.
+
+The position had to come from somewhere other than the obvious place. ESPN's
+box-score summaries carry **no athlete position at all**: measured on a full
+Week 8 slate, 0 of 892 stat rows had one, so the `pos` field the aggregator had
+always written was always the empty string. The team rosters the bridge already
+fetches do carry it, and on the same slate they resolve **891 of 892 stat rows,
+and 266 of 266 players with fantasy points** — nobody falls through. They are
+normalised with the bridge's own `normPos`, so the board and the bridge group
+players identically rather than each holding an opinion (ESPN says `PK` and
+`FB`; fantasy says `K` and `RB`).
+
+Because of that the rosters now load *before* the Sleeper player dictionary:
+positions are useful with no league connected, and the old order left them
+blank whenever Sleeper was slow or unreachable. There is no DEF chip — a team
+defence is not an athlete, so it never enters the player table, and a chip that
+could only ever show an empty board would read as a bug.
 
 Points come from **box-score aggregates, not play text**. A box score is already
 reconciled: yards, receptions and touchdowns are single numbers, so mapping them
@@ -238,6 +255,19 @@ What the phone layout had to fix:
   remove the feed's most useful controls exactly where they matter most.
 - Phones keep **150 feed cards** rather than 400. The whole day stays in memory
   for filtering and stats; it is the DOM that is capped.
+
+Between the phone breakpoint and 1180px the three columns stop fitting, so the
+stats panel becomes an overlay and starts closed. That default was read as the
+panel *vanishing*, for two reasons worth recording: the open state was never
+persisted, so every reload shut it again whatever you had chosen, and the
+header toggle carried no pressed state, which left a closed panel
+indistinguishable from an app with no stats panel. The choice is now stored
+(`gamezone:panelOpen`) and only the first visit gets the width default; the
+button lights the same way a pressed chip does; and Escape dismisses the panel
+while it is overlaying something. That Escape handler runs in the **capture**
+phase on purpose — `main.js` also listens on `document` to dismiss its dialogs,
+and in the bubble phase one Escape closed the settings dialog *and* the panel,
+because the dialog was already hidden by the time the panel's check ran.
 
 A phone is identified by shape, not width alone:
 

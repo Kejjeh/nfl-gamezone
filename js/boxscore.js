@@ -7,6 +7,7 @@
 import { state } from './state.js';
 import * as espn from './espn.js';
 import * as scoring from './scoring.js';
+import * as bridge from './bridge.js';
 
 // Fantasy scoring only needs the first five. The rest are here for bet
 // markets - tackles, sacks and return yards are all commonly priced - and for
@@ -53,7 +54,9 @@ export function rebuildPlayerTable() {
               id: row.id,
               name: row.name,
               short: row.short,
-              pos: row.pos,
+              // The box score itself carries no position, so it comes from
+              // the roster map, normalised to the fantasy spelling (PK -> K).
+              pos: bridge.normPos(espn.positionOf(row.id)),
               team: team.abbr,
               opp,
               eventId: box.eventId,
@@ -202,10 +205,26 @@ function summaryLine(r) {
   return bits.join(' · ') || '—';
 }
 
-export function leaders(categoryKey, limit = 12) {
+// Fantasy position groups for the leaders board. FLEX mirrors the league's
+// FLEX slot. There is no DEF group on purpose: a team defence is not an
+// athlete, so it never appears in the box-score player table, and a chip that
+// could only ever show an empty board would read as a bug.
+export const POSITIONS = {
+  all: { label: 'All', match: () => true },
+  QB: { label: 'QB', match: (p) => p === 'QB' },
+  RB: { label: 'RB', match: (p) => p === 'RB' },
+  WR: { label: 'WR', match: (p) => p === 'WR' },
+  TE: { label: 'TE', match: (p) => p === 'TE' },
+  FLEX: { label: 'FLEX', match: (p) => p === 'RB' || p === 'WR' || p === 'TE' },
+  K: { label: 'K', match: (p) => p === 'K' },
+};
+
+export function leaders(categoryKey, limit = 12, pos = 'all') {
   const cat = CATEGORIES[categoryKey];
   if (!cat || !state.playerStats) return [];
+  const group = POSITIONS[pos] || POSITIONS.all;
   return [...state.playerStats.values()]
+    .filter((r) => group.match(r.pos))
     .map((r) => ({ row: r, v: cat.value(r) }))
     .filter((x) => x.v > 0)
     .sort((a, b) => b.v - a.v || a.row.name.localeCompare(b.row.name))

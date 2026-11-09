@@ -247,6 +247,20 @@ async function initSleeper() {
 // The bridge needs ~950 KB of ESPN rosters and the Sleeper player dictionary.
 // Both load in the background: the play feed is already running without them.
 async function initBridge() {
+  // The rosters are also the only source of player positions - the box-score
+  // summaries carry none - so they load first and the player table is rebuilt
+  // the moment they land. Doing this ahead of Sleeper means the leaders
+  // board's position filter works even when no league is connected.
+  try {
+    await espn.loadRosters((done, total) => {
+      state.bridge.progress = `${done}/${total}`;
+    });
+    boxscore.rebuildPlayerTable();
+    panel.render();
+  } catch (err) {
+    console.warn('[bridge] rosters failed', err);
+  }
+
   try {
     await sleeper.loadPlayers();
     await bridge.build((done, total) => {
@@ -433,6 +447,7 @@ function applyLayout() {
     delete document.body.dataset.mview;
     document.body.classList.toggle('panel-closed', !state.panel.open);
   }
+  panel.syncToggle();
 }
 
 function wireMobile() {
@@ -626,9 +641,13 @@ async function boot() {
   panel.wire();
   wireMobile();
   // Three columns need room; between the phone breakpoint and that, the panel
-  // overlays the feed, so it starts closed. A phone ignores this entirely -
-  // applyLayout() decides there.
-  if (window.innerWidth < 1180) state.panel.open = false;
+  // overlays the feed, so it starts closed - but only until you say otherwise.
+  // Once you have opened or closed it yourself, that choice is what loads, at
+  // any width: the panel re-closing itself on every reload read as the panel
+  // disappearing. A phone ignores all of this - applyLayout() decides there.
+  const savedPanel = store.get('panelOpen');
+  if (typeof savedPanel === 'boolean') state.panel.open = savedPanel;
+  else if (window.innerWidth < 1180) state.panel.open = false;
   applyLayout();
   feed.showSkeleton();
   rail.render();            // renders its own skeleton while empty

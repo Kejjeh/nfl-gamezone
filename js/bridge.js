@@ -20,7 +20,9 @@ export function normName(s) {
     .replace(/[^a-z]/g, '');                            // drop apostrophes, dots, spaces
 }
 
-function normPos(p) {
+// Exported because the leaders board groups by the same fantasy positions the
+// bridge matches on: ESPN says PK and FB where Sleeper says K and RB.
+export function normPos(p) {
   const x = String(p || '').toUpperCase();
   if (x === 'PK') return 'K';
   if (x === 'FB') return 'RB';

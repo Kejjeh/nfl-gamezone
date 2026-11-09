@@ -264,9 +264,29 @@ function normalizeBoxscore(d, eventId) {
 
 // Sleeper's espn_id covers only ~26% of fantasy-relevant players, so the real
 // link runs through ESPN's own rosters. 32 calls, cached for a day.
+// Held in memory as well as in the store, so synchronous callers can ask a
+// player's position without awaiting. `null` means "not loaded yet", which is
+// a different answer from "this player has no position" - see positionOf.
+let rosterMap = null;
+
+function rosters() {
+  if (!rosterMap) rosterMap = store.get('espnRosters') || null;
+  return rosterMap;
+}
+
+export const rostersReady = () => !!rosters();
+
+// ESPN's box-score summaries carry no athlete position at all: measured on a
+// full Week 8 slate, 0 of 892 stat rows had one. The rosters do, so they are
+// the position source. Returns '' when the rosters have not loaded, so a
+// caller that cares about the difference must check rostersReady() first.
+export function positionOf(athleteId) {
+  return rosters()?.[String(athleteId)]?.[2] || '';
+}
+
 export async function loadRosters(onProgress) {
   const cached = store.get('espnRosters');
-  if (cached) return cached;
+  if (cached) { rosterMap = cached; return cached; }
 
   const teams = loadTeams();
   const map = {};
@@ -293,6 +313,7 @@ export async function loadRosters(onProgress) {
   await Promise.all(workers);
 
   store.set('espnRosters', map, TTL.espnRosters);
+  rosterMap = map;
   return map;
 }
 

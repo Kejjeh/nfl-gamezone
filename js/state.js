@@ -30,7 +30,7 @@ export const state = {
   boxscores: new Map(),     // eventId -> normalized box score
   playerStats: new Map(),   // espn athleteId -> aggregated line + fantasy points
 
-  panel: { open: true, tab: 'leaders', leaderCat: 'fpts', userPicked: false },
+  panel: { open: true, tab: 'leaders', leaderCat: 'fpts', leaderPos: 'all', userPicked: false },
 
   // mode = significance; types = play-type chips (empty set means no type filter)
   // athleteId follows one player across every game; athleteName is kept only

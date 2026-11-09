@@ -1,6 +1,7 @@
 // The right-hand stats panel: league leaders across the whole slate, or the
 // box score for whichever game is selected.
 import { state, emit } from './state.js';
+import * as store from './store.js';
 import * as box from './boxscore.js';
 import * as espn from './espn.js';
 import * as scoring from './scoring.js';
@@ -9,6 +10,7 @@ import * as bridge from './bridge.js';
 import * as feed from './feed.js';
 import * as betsUI from './bets-ui.js';
 import * as bets from './bets.js';
+import * as mu from './matchup.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -177,22 +179,17 @@ function lineupRow(pid, slot) {
     </li>`;
 }
 
-function yetToPlay(ids) {
-  return ids.filter((pid) => {
-    const g = espn.gameForTeam(sleeper.playerTeam(pid) || pid);
-    return g && g.state === 'pre';
-  }).length;
-}
-
 function lineupBlock(title, ids, slots, total) {
   if (!ids.length) return '';
-  const left = yetToPlay(ids);
+  // Same breakdown the header strip shows, from the same helper, so the two can
+  // never disagree about how many of your starters are still to come.
+  const states = mu.statesLabel(mu.lineupStates(ids));
   return `<section class="lu-block">
       <div class="lu-head">
         <h3>${esc(title)}</h3>
         <span class="lu-total num">${total == null ? '—' : Number(total).toFixed(1)}</span>
       </div>
-      <div class="lu-sub">${left ? `${left} yet to play` : 'all players under way or done'}</div>
+      <div class="lu-sub">${states || 'no players'}</div>
       <ol class="lu">${ids.map((pid, i) => lineupRow(pid, slots[i])).join('')}</ol>
     </section>`;
 }
@@ -214,16 +211,29 @@ function renderTeam() {
 
 function renderLeaders() {
   const key = state.panel.leaderCat;
+  const pos = state.panel.leaderPos || 'all';
   const cat = box.CATEGORIES[key];
-  const rows = box.leaders(key, 15);
+  const rows = box.leaders(key, 15, pos);
 
   const chips = Object.entries(box.CATEGORIES).map(([k, c]) =>
     `<button type="button" class="chip" data-leadercat="${k}"
        aria-pressed="${k === key}">${esc(c.label)}</button>`).join('');
 
+  const posChips = Object.entries(box.POSITIONS).map(([k, g]) =>
+    `<button type="button" class="chip chip-pos" data-leaderpos="${k}"
+       aria-pressed="${k === pos}">${esc(g.label)}</button>`).join('');
+
   let list;
   if (!rows.length) {
-    list = `<div class="panel-empty">No stats yet.<br>They appear once games are under way.</div>`;
+    // Positions come from the ESPN rosters, which load in the background. A
+    // filtered board that is empty only because they have not arrived yet is
+    // a different thing from a slate with no stats, and must say so rather
+    // than look like an empty week.
+    list = pos !== 'all' && !espn.rostersReady()
+      ? `<div class="panel-empty">Positions are still loading.<br>They arrive with the player rosters.</div>`
+      : pos !== 'all'
+        ? `<div class="panel-empty">No ${esc(box.POSITIONS[pos]?.label || pos)} stats yet.</div>`
+        : `<div class="panel-empty">No stats yet.<br>They appear once games are under way.</div>`;
   } else {
     list = `<ol class="ld">` + rows.map(({ row, v }, i) => {
       const colour = espn.colorForAbbr(row.team) || 'var(--fg-3)';
@@ -242,7 +252,8 @@ function renderLeaders() {
     }).join('') + `</ol>`;
   }
 
-  return `<div class="ld-chips">${chips}</div>${list}`;
+  return `<div class="ld-chips">${chips}</div>
+          <div class="ld-chips ld-pos">${posChips}</div>${list}`;
 }
 
 /* ---------- shell ---------- */
@@ -296,6 +307,13 @@ export function wire() {
       el.querySelector('.panel-body')?.scrollTo(0, 0);
       return;
     }
+    const posBtn = e.target.closest('[data-leaderpos]');
+    if (posBtn) {
+      state.panel.leaderPos = posBtn.dataset.leaderpos;
+      render();
+      el.querySelector('.panel-body')?.scrollTo(0, 0);
+      return;
+    }
 
     if (e.target.closest('#bt-add')) { betsUI.openDialog(); return; }
 
@@ -333,8 +351,42 @@ export function wire() {
   });
 
   document.getElementById('btn-panel')?.addEventListener('click', () => {
-    state.panel.open = !state.panel.open;
-    document.body.classList.toggle('panel-closed', !state.panel.open);
-    emit('panel');
+    setOpen(!state.panel.open);
   });
+
+  // Below 1180px the panel is an overlay sitting on top of the feed, and the
+  // header button is the only thing that dismisses it. Escape is what anyone
+  // reaches for first, so it closes it too - but only while it is overlaying
+  // something, never in the three-column layout where nothing is covered.
+  // Capture phase on purpose. main.js also listens for Escape on `document`
+  // to dismiss its dialogs, and whichever bubble handler was registered first
+  // wins - measured: one Escape closed the settings dialog AND the panel,
+  // because the dialog was already hidden by the time this ran. In capture
+  // this runs first, so the "is a dialog open?" question gets a true answer.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !state.panel.open) return;
+    if (document.body.dataset.mview) return;              // phone: no overlay
+    if (window.innerWidth >= 1180) return;                // three columns fit
+    if (document.querySelector('.overlay:not([hidden])')) return;  // a dialog owns Escape
+    setOpen(false);
+  }, true);
+}
+
+// The one place the panel's open state changes. It persists the choice,
+// because a panel that reopened itself on every reload was the whole
+// complaint, and it keeps the button's pressed state honest.
+function setOpen(open) {
+  state.panel.open = open;
+  store.set('panelOpen', open);
+  document.body.classList.toggle('panel-closed', !open);
+  syncToggle();
+  emit('panel');
+}
+
+// The button is a toggle, so it has to say which way it is set. Without this
+// a closed panel below 1180px is indistinguishable from there being no stats
+// panel at all, which is exactly how it read.
+export function syncToggle() {
+  document.getElementById('btn-panel')
+    ?.setAttribute('aria-pressed', String(!!state.panel.open));
 }
