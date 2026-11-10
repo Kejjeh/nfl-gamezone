@@ -226,15 +226,242 @@ function madeFieldGoals(d) {
   return byTeam;
 }
 
+// Team-defence counts for fantasy scoring.
+//
+// No single part of the payload has these, and the three obvious shortcuts are
+// all wrong. Measured on the full Week 8 slate against Sleeper's own numbers:
+//
+//   Sacks        the `defensive` group's per-player `sacks`, summed. Agrees
+//                with the opponent's team-stat `sacksYardsLost` on 10 of 10
+//                team-sides, and handles half-sacks.
+//   Takeaways    the OPPONENT's team-stat `fumblesLost`. Summing the team's own
+//                players' `fumblesRecovered` disagreed on 3 of 10 team-sides
+//                (GB 2 vs 1, TEN 3 vs 1, DAL 3 vs 1) because that field counts
+//                a player falling on his own team's fumble, which is not a
+//                takeaway and scores nothing.
+//   Defensive TD `scoringPlays`, by type text. Neither obvious source works.
+//                A pick-six appears in BOTH the `defensive` group's
+//                `defensiveTouchdowns` and the `interceptions` group's
+//                `interceptionTouchdowns`, so summing player rows double-counts
+//                it (JAX read 26 against Sleeper's 20). The team-stat
+//                `defensiveTouchdowns` is wrong too: LV reads 2 having scored
+//                no defensive touchdown at all - its only non-offensive score
+//                was a 95-yard kickoff return. The scoring-play list is the
+//                only place that says which kind of touchdown it was.
+//   Safeties     `scoringPlays` with type `SF`, the same place field-goal
+//                distances come from. They are in no stat group at all.
+//
+// With those four, points allowed from the opponent's score and yards allowed
+// from their `totalYards`, all 10 defences anyone in the league started in
+// Week 8 matched Sleeper to the cent.
+//
+// Known gaps, both unmeasurable on the Week 8 slate and both named in the
+// README: a blocked kick (`blk_kick`) is in no stat group and is not a scoring
+// play, and none occurred; and no league member started a team whose returner
+// scored, so whether Sleeper credits a kick- or punt-return touchdown to the
+// D/ST could not be checked. Return touchdowns are therefore left out, which
+// is what the 10 verified defences support.
+// Two-point conversions.
+//
+// Nothing in the box score records one: a successful two-point pass shows up in
+// no passing, rushing or receiving stat line, so a quarterback who runs one in
+// scores two points that the stat sheet cannot see. Diagnostics caught it as
+// two players reading exactly 2.00 low against Sleeper on a finished slate
+// (Jordan Love 34.18 vs 36.18, Baker Mayfield 7.72 vs 9.72) - both had run a
+// conversion.
+//
+// They are in the scoring-play text instead, in the parenthetical after the
+// touchdown, which is the same complete whole-game source field-goal distances
+// come from. Measured over 104 games (weeks 3-9) there are exactly four forms
+// and no others:
+//
+//   "<Passer> Pass to <Receiver> for Two-Point Conversion"   22x  succeeded
+//   "<Rusher> Run for Two-Point Conversion"                  10x  succeeded
+//   "Two-Point Pass Conversion Failed"                       25x  failed
+//   "Two-Point Run Conversion Failed"                         2x  failed
+//
+// A failure never carries a name and a success always does, so requiring the
+// name is what separates them - no "Failed" test is needed, and a fifth form
+// would be ignored rather than mis-scored.
+//
+// Like field goals, the entry gives names and no athlete ids, so these are
+// matched back to box-score rows by name in boxscore.js.
+const TWO_PT_PAREN = /\(([^()]*Two-Point[^()]*)\)/i;
+const TWO_PT_RUN = /^([A-Za-z][A-Za-z.'’\s-]*?)\s+Run\s+for\s+Two-Point\s+Conversion$/i;
+const TWO_PT_PASS = /^([A-Za-z][A-Za-z.'’\s-]*?)\s+Pass\s+to\s+([A-Za-z][A-Za-z.'’\s-]*?)\s+for\s+Two-Point\s+Conversion$/i;
+
+function twoPointConversions(d) {
+  const byTeam = new Map();
+  for (const p of d?.scoringPlays || []) {
+    const m = TWO_PT_PAREN.exec(p.text || '');
+    if (!m) continue;
+    const inner = m[1].trim();
+
+    let rec = null;
+    const run = TWO_PT_RUN.exec(inner);
+    if (run) rec = { kind: 'run', rusher: run[1].trim() };
+    else {
+      const pass = TWO_PT_PASS.exec(inner);
+      if (pass) rec = { kind: 'pass', passer: pass[1].trim(), receiver: pass[2].trim() };
+    }
+    if (!rec) continue;                      // a failed attempt, or a new form
+
+    const tid = String(p.team?.id ?? '');
+    if (!byTeam.has(tid)) byTeam.set(tid, []);
+    byTeam.get(tid).push(rec);
+  }
+  return byTeam;
+}
+
+const DEF_TD_TEXT = /\b(?:interception|fumble|blocked\s+(?:punt|field\s*goal))\s+return\s+touchdown\b/i;
+
+function teamDefence(d) {
+  const num = (v) => {
+    const x = parseFloat(String(v ?? '').replace(/,/g, ''));
+    return Number.isFinite(x) ? x : 0;
+  };
+
+  // Team-level stat lines, by team id.
+  const teamStats = new Map();
+  for (const t of d?.boxscore?.teams || []) {
+    const m = {};
+    for (const st of t.statistics || []) m[st.name] = st.displayValue;
+    teamStats.set(String(t.team?.id ?? ''), m);
+  }
+
+  const scores = new Map();
+  for (const c of d?.header?.competitions?.[0]?.competitors || []) {
+    scores.set(String(c.team?.id ?? ''), num(c.score));
+  }
+
+  // Safeties and defensive touchdowns, both only knowable from the play's own
+  // type text. DEF_TD_TEXT deliberately excludes kickoff and punt returns:
+  // those are special teams, scored separately, and are exactly what makes the
+  // team-stat `defensiveTouchdowns` unusable.
+  const safeties = new Map();
+  const defTds = new Map();
+  for (const p of d?.scoringPlays || []) {
+    const tid = String(p.team?.id ?? '');
+    const abbr = p.type?.abbreviation || '';
+    if (abbr === 'SF') {
+      safeties.set(tid, (safeties.get(tid) || 0) + 1);
+      continue;
+    }
+    if (abbr === 'TD' && DEF_TD_TEXT.test(p.type?.text || '')) {
+      defTds.set(tid, (defTds.get(tid) || 0) + 1);
+    }
+  }
+
+  // Per-player sacks and interceptions, summed per team.
+  const tally = new Map();
+  for (const group of d?.boxscore?.players || []) {
+    const tid = String(group.team?.id ?? '');
+    const acc = { sacks: 0, ints: 0 };
+    for (const cat of group.statistics || []) {
+      const keys = cat.keys || [];
+      const at = (stats, key) => {
+        const i = keys.indexOf(key);
+        return i < 0 ? 0 : num(stats?.[i]);
+      };
+      for (const a of cat.athletes || []) {
+        if (cat.name === 'defensive') acc.sacks += at(a.stats, 'sacks');
+        if (cat.name === 'interceptions') acc.ints += at(a.stats, 'interceptions');
+      }
+    }
+    tally.set(tid, acc);
+  }
+
+  const ids = [...tally.keys()];
+  const out = new Map();
+  for (const tid of ids) {
+    const oppId = ids.find((x) => x !== tid);
+    const opp = teamStats.get(oppId) || {};
+    const acc = tally.get(tid) || { sacks: 0, ints: 0 };
+    out.set(tid, {
+      sacks: acc.sacks,
+      ints: acc.ints,
+      fumRec: num(opp.fumblesLost),
+      defTd: defTds.get(tid) || 0,
+      safeties: safeties.get(tid) || 0,
+      ptsAllowed: scores.get(oppId) ?? null,
+      ydsAllowed: num(opp.totalYards),
+    });
+  }
+  return out;
+}
+
+// Per-play win probability, as a swing rather than a level.
+//
+// The summary already carries this; it costs nothing extra to keep. The
+// entries arrive in play order, so the swing is just the step from the
+// previous entry. `playId` joins straight onto the play feed's own ids -
+// measured 197 of 197 on a full game, so there is no bridge here and no
+// fallback worth writing.
+function winProbByPlay(d) {
+  const out = new Map();
+  let prev = null;
+  for (const w of Array.isArray(d?.winprobability) ? d.winprobability : []) {
+    const id = String(w?.playId ?? '');
+    const home = Number(w?.homeWinPercentage);
+    if (!id || !Number.isFinite(home)) continue;
+    out.set(id, { home, swing: prev == null ? 0 : Math.abs(home - prev) });
+    prev = home;
+  }
+  return out;
+}
+
+// Drive summaries: 25 lines where the play feed has 197. `previous` holds the
+// finished drives and `current` the one in progress, and a game that has not
+// kicked off has neither - all three are normal, so nothing here throws.
+function normalizeDrives(d) {
+  const src = d?.drives;
+  if (!src) return [];
+  const all = Array.isArray(src.previous) ? src.previous.slice() : [];
+  if (src.current) all.push(src.current);
+  const out = [];
+  for (const x of all) {
+    const id = String(x?.id ?? '');
+    if (!id) continue;
+    const plays = Array.isArray(x?.plays) ? x.plays : [];
+    out.push({
+      id,
+      team: x?.team?.abbreviation || '',
+      teamId: String(x?.team?.id ?? ''),
+      // "8 plays, 56 yards, 3:33" - ESPN writes this line, so it is not
+      // rebuilt here from parts that might disagree with it.
+      description: x?.description || '',
+      result: x?.displayResult || x?.shortDisplayResult || x?.result || '',
+      isScore: !!x?.isScore,
+      playCount: plays.length,
+      yards: Number(x?.yards) || 0,
+      period: x?.start?.period?.number ?? null,
+      startText: x?.start?.text || '',
+      firstPlayId: plays.length ? String(plays[0]?.id ?? '') : '',
+      lastPlayId: plays.length ? String(plays[plays.length - 1]?.id ?? '') : '',
+    });
+  }
+  return out;
+}
+
 function normalizeBoxscore(d, eventId) {
-  const out = { eventId: String(eventId), teams: [], fetched: Date.now() };
+  const out = {
+    eventId: String(eventId),
+    teams: [],
+    fetched: Date.now(),
+    winProb: winProbByPlay(d),
+    drives: normalizeDrives(d),
+  };
   const fgByTeam = madeFieldGoals(d);
+  const defByTeam = teamDefence(d);
+  const twoPtByTeam = twoPointConversions(d);
   for (const group of d?.boxscore?.players || []) {
     const team = {
       id: String(group.team?.id ?? ''),
       abbr: group.team?.abbreviation || '??',
       categories: {},
       fgMade: fgByTeam.get(String(group.team?.id ?? '')) || [],
+      defense: defByTeam.get(String(group.team?.id ?? '')) || null,
+      twoPt: twoPtByTeam.get(String(group.team?.id ?? '')) || [],
     };
     for (const cat of group.statistics || []) {
       const keys = cat.keys || [];

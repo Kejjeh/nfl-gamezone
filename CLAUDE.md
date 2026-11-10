@@ -15,15 +15,15 @@ Read the relevant README section before changing the behaviour it describes.
 ```bash
 python -m http.server 8765              # serve; open http://localhost:8765 (file:// does NOT work: ES modules)
 for f in js/*.js; do node --check "$f"; done   # syntax check; expect no output
-node tools/bets-test.mjs                        # bet settlement; offline. expect: 77 passed, 0 failed
-node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (free). expect: 30 passed, 0 failed
+node tools/bets-test.mjs                        # bet settlement; offline. expect: 102 passed, 0 failed
+node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (free). expect: 0 failed
 npm test                                        # runs both of the above
 ```
 
 - CI (`.github/workflows/tests.yml`) runs the syntax check and `bets-test.mjs` on every push to `main` and every PR. It leaves out `worker-test.mjs` (live ESPN).
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
-- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. Anything else is proved by the syntax check plus loading the page.
+- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. **Its pass count is not fixed** - it branches on whether any game is live, so only `0 failed` is the expectation (42 on a finished slate, 30 on another). `bets-test.mjs` is offline and deterministic, so its count is. Anything else is proved by the syntax check plus loading the page.
 - Every page load hits ESPN and Sleeper public endpoints (free, unauthenticated, about 6-7 KB/s on a full slate). Nothing costs money.
 
 ## Architecture map
@@ -34,15 +34,15 @@ npm test                                        # runs both of the above
 | `js/main.js` | boot, wiring, settings dialog, Diagnostics (bridge coverage + scoring check vs Sleeper) |
 | `js/config.js` | endpoints, poll intervals, cache TTLs, feed caps, ESPN/Sleeper team-abbreviation aliases |
 | `js/teams.js` | the 32 franchises, baked in (ESPN's teams endpoint has no CORS header); colours lifted in HLS |
-| `js/espn.js` | scoreboard, whole-game play pull then tail paging, team rosters, box-score summaries |
+| `js/espn.js` | scoreboard, whole-game play pull then tail paging, team rosters, box-score summaries, win probability, drives |
 | `js/sleeper.js` | league, rosters, live matchups, slim player cache |
 | `js/bridge.js` | ESPN athlete id -> Sleeper player id (name + team + position; `espn_id` only as fast path) |
 | `js/feed.js` | cross-game merge, dedupe, filters, player follow, `tierOf()` play tiers, rendering |
 | `js/boxscore.js`, `js/scoring.js` | slate-wide stat table, leader ranking, fantasy points from box-score aggregates |
-| `js/panel.js`, `js/rail.js`, `js/matchup.js` | stats panel, game rail with starter markers, header score strip |
+| `js/panel.js`, `js/rail.js`, `js/matchup.js` | stats panel (incl. the per-game drive strip), game rail with starter markers, header score strip |
 | `js/poller.js`, `js/state.js`, `js/store.js` | backoff scheduler, one state object + pub/sub, localStorage with TTL |
 | `js/alerts.js` | WebAudio chimes, flash, desktop notifications |
-| `js/bets-core.js`, `js/bets.js`, `js/bets-ui.js` | bet tracking: pure settlement logic (tested by `tools/bets-test.mjs`), state, UI |
+| `js/bets-core.js`, `js/bets.js`, `js/bets-ui.js` | bet tracking: pure settlement logic incl. the frozen-settlement record (tested by `tools/bets-test.mjs`), state, UI |
 | `js/push.js` | web-push subscription for the Home Screen app (iOS 16.4+) |
 | `worker/` | `gamezone-push`: Cloudflare Worker (cron + poll + VAPID push), deployed with `wrangler`; see `worker/README.md`. Deploying is the user's call |
 | `ios/gamezone-widget.js` | Scriptable lock/home-screen widget (matchup, not a play feed) |
@@ -58,7 +58,36 @@ npm test                                        # runs both of the above
   name index in `bridge.js`.
 - **Field-goal distance comes from `summary.scoringPlays`**, not the play feed. The play-feed
   version under-scored kickers (McPherson 4 vs Sleeper 13). Don't move it back.
-- **Points come from box-score aggregates, never from parsing play text.**
+- **Points come from box-score aggregates, never from parsing play text** - with
+  two measured exceptions that are in no stat line at all: field-goal distance
+  and **two-point conversions**, both read from `summary.scoringPlays`. A 2pt
+  conversion gains no yard and no TD the box score admits to, so without it a
+  converting QB reads exactly 2.00 low (caught by Diagnostics: 132/134 exact,
+  both misses QBs). 104 games measured; four text forms, successes always carry
+  a name and failures never do, so requiring the name is the whole test.
+- **A team defence has four counts and every obvious source for them is wrong.**
+  Sacks sum the `defensive` group's player rows; takeaways are the *opponent's*
+  team-stat `fumblesLost` (a team's own `fumblesRecovered` includes falling on
+  its own fumble, and disagreed on 3 of 10 team-sides); defensive touchdowns and
+  safeties come from `scoringPlays` by type text. Do **not** use the team-stat
+  `defensiveTouchdowns`: LV reads 2 having scored none, because a kickoff return
+  lands in it. Verified 10/10 against Sleeper on Week 8 - see `teamDefence()` in
+  `espn.js`. Blocked kicks and return TDs are deliberately uncounted (no sample).
+- **A settled bet is frozen onto its record, never recomputed.** `legProgress`
+  resolves against the *current* scoreboard, so once the week rolls over the
+  game is gone, every leg reads `unknown` and a won bet reads `open` forever.
+  `freezable()`/`snapshot()` in `bets-core.js` write it; do not add a code path
+  that recomputes a bet carrying `settled`.
+- **Win probability joins on the play's own id, and it is free.** It rides in the
+  `summary` payload the box-score poll already fetches, and `winprobability[].playId`
+  matches the play feed exactly - measured 2,604 of 2,604 on a full slate. Drives come
+  from the same payload. Neither needs a fetch of its own; do not add one.
+- **A summary is ~55 KB gzipped, not the ~19 KB an old comment claimed** (measured:
+  five finished Week 8 games, 49-59 KB). It is three quarters of the network budget
+  (~34 KB/s on a full slate), so `INTERVALS.boxscores` is the lever that matters.
+- **The "while you were away" count is derived from the rendered list, never from
+  `state.plays`.** Those differ by whatever the filters drop, and counting the latter
+  put "30 plays" above 21 cards.
 - **The phone media query lives in two places** (`app.css` twice and `PHONE` in `js/main.js`);
   all copies must stay identical. Specificity bit once: `body.panel-closed main` outranked the
   phone rule. Check a phone change at 375x812 and sideways (812x375).

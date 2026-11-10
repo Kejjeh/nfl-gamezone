@@ -399,6 +399,117 @@ check('bare moneyline', B.parseSlip('Bengals -140', R).legs.map((l) => [l.market
   check('odds inferred from payout', r.odds, 200);
 }
 
+/* ------------------------------------------------- frozen settlement */
+
+// The bug these cover: legProgress resolves legs against the CURRENT
+// scoreboard, so once the week rolls over the game is gone, every leg reads
+// 'unknown', and a decided bet reads 'open' again - forever.
+
+const bet = (legs, extra = {}) => ({
+  v: 1, id: 'B1', stake: 10, odds: -110, legs, ...extra,
+});
+
+const recLeg = (over) => ({
+  id: 'L1', market: 'rec_yds', side: over, line: 39.5, cmp: 'gt',
+  athleteId: '1', playerName: 'A Receiver',
+});
+
+// A scoreboard that has rolled past the week: no game matches any more.
+const gone = (cats) => ({ statsFor: () => cats, gameFor: () => null });
+
+{
+  const b = bet([recLeg('over')]);
+  const live = B.betStatus(b, ctx(recYds(55), game('post')));
+  check('won before freezing', live.state, 'won');
+  check('a decided bet is freezable', B.freezable(b, live), true);
+
+  b.settled = B.snapshot(b, live, 1762600000000);
+  const after = B.betStatus(b, gone(null));
+  check('still won once the week rolls over', after.state, 'won');
+  check('frozen status says so', [after.frozen, after.settledAt], [true, 1762600000000]);
+  check('return survives', after.returned, 10 + B.profit(10, -110));
+  check('leg detail survives', after.legs[0].prog.detail, 'cleared');
+  check('leg progress survives', after.legs[0].prog.label, live.legs[0].prog.label);
+  check('nothing outstanding', after.legs[0].prog.state, 'won');
+  check('already frozen is not freezable again', B.freezable(b, after), false);
+}
+
+{
+  // Without the freeze this is the actual regression: open, with the stake
+  // counted as live exposure again.
+  const b = bet([recLeg('over')]);
+  check('unfrozen bet rots to open', B.betStatus(b, gone(null)).state, 'open');
+}
+
+{
+  const b = bet([recLeg('over')]);
+  const mid = B.betStatus(b, ctx(recYds(55), game('in')));
+  check('hit but live', mid.state, 'all hit');
+  check('a live bet does not freeze', B.freezable(b, mid), false);
+}
+
+{
+  // An under already past its line is arithmetically dead, but ESPN still
+  // revises stat lines, so it waits for the whistle.
+  const b = bet([recLeg('under')]);
+  const busted = B.betStatus(b, ctx(recYds(80), game('in')));
+  check('busted under reads lost', busted.state, 'lost');
+  check('busted mid-game does not freeze', B.freezable(b, busted), false);
+  const final = B.betStatus(b, ctx(recYds(80), game('post')));
+  check('busted under freezes once final', B.freezable(b, final), true);
+}
+
+{
+  // A parlay cannot recover, so one dead leg in a finished game decides it
+  // even while the other game is still running.
+  const dead = { ...recLeg('over'), id: 'L1', line: 200.5 };
+  const other = { ...recLeg('over'), id: 'L2' };
+  const b = bet([dead, other]);
+  const mixed = {
+    statsFor: () => recYds(40),
+    gameFor: (leg) => game(leg.id === 'L1' ? 'post' : 'in'),
+  };
+  const st = B.betStatus(b, mixed);
+  check('parlay with a dead leg is lost', st.state, 'lost');
+  check('lost parlay freezes on the dead leg', B.freezable(b, st), true);
+  b.settled = B.snapshot(b, st);
+  check('lost parlay stays lost', B.betStatus(b, gone(null)).state, 'lost');
+  check('lost returns nothing', B.betStatus(b, gone(null)).returned, 0);
+}
+
+{
+  // A win needs every game home - one still running means no freeze.
+  const b = bet([{ ...recLeg('over'), id: 'L1' }, { ...recLeg('over'), id: 'L2' }]);
+  const half = {
+    statsFor: () => recYds(55),
+    gameFor: (leg) => game(leg.id === 'L1' ? 'post' : 'in'),
+  };
+  check('half-finished parlay does not freeze', B.freezable(b, B.betStatus(b, half)), false);
+}
+
+{
+  // An unmatched leg has no game, so there is nothing to be sure about.
+  const b = bet([{ id: 'L1', market: 'rec_yds', side: 'over', line: 39.5 }]);
+  const st = B.betStatus(b, gone(null));
+  check('unmatched leg stays open', st.state, 'open');
+  check('unmatched leg never freezes', B.freezable(b, st), false);
+}
+
+{
+  const b = bet([]);
+  check('a bet with no legs never freezes', B.freezable(b, B.betStatus(b, gone(null))), false);
+}
+
+{
+  // A snapshot missing a leg must not invent progress for it.
+  const b = bet([recLeg('over')]);
+  const live = B.betStatus(b, ctx(recYds(55), game('post')));
+  b.settled = { ...B.snapshot(b, live), legs: [] };
+  const after = B.betStatus(b, gone(null));
+  check('missing snapshot leg reads unknown', after.legs[0].prog.state, 'unknown');
+  check('and says why', after.legs[0].prog.detail, 'not recorded');
+}
+
 /* ----------------------------------------------------------------- report */
 
 console.log(`${pass} passed, ${failures.length} failed`);

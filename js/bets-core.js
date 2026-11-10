@@ -306,6 +306,8 @@ const DONE = new Set(['won', 'push']);
 // well the others are doing - which is the whole reason a parlay tracker is
 // worth having.
 export function betStatus(bet, ctx) {
+  if (bet?.settled) return thawed(bet);
+
   const legs = (bet.legs || []).map((leg) => ({ leg, prog: legProgress(leg, ctx) }));
   const states = legs.map((l) => l.prog.state);
 
@@ -329,6 +331,93 @@ export function betStatus(bet, ctx) {
     toWin: profit(bet.stake, bet.odds),
     returned: state === 'won' ? (Number(bet.stake) || 0) + profit(bet.stake, bet.odds)
       : state === 'push' ? (Number(bet.stake) || 0) : 0,
+  };
+}
+
+/* ------------------------------------------------------ frozen settlement */
+
+// A decided bet has to stop being recomputed.
+//
+// legProgress resolves every leg against the CURRENT scoreboard. Once the week
+// rolls over, ctx.gameFor can no longer find the event, so the leg takes the
+// `!game` branch and reads 'unknown' - a state neither DEAD nor DONE contains.
+// betStatus then falls through to 'open', and a bet you won in week 8 reads as
+// still running in week 10, forever. The money summary is wrong with it: the
+// stake goes back to counting as live exposure instead of a settled return.
+//
+// So the moment a bet is decided and the games it depends on are over, the
+// settlement is written onto the record and read back from there. It is a
+// snapshot of the progress the UI renders, not a second source of truth: the
+// legs themselves are untouched.
+
+const TERMINAL = new Set(['won', 'lost', 'push']);
+
+// Everything legRow() draws, and nothing that holds a live game object.
+const snapLeg = ({ leg, prog }) => ({
+  id: leg.id,
+  state: prog.state,
+  label: prog.label || '',
+  detail: prog.detail || '',
+  current: prog.current ?? null,
+  line: prog.line ?? null,
+  side: prog.side || '',
+  unit: prog.unit || '',
+  pct: prog.pct ?? 0,
+});
+
+const gameOver = (l) => l.prog.game?.state === 'post';
+
+// Final means final. An under that is already busted is arithmetically decided
+// and the books would settle it, but ESPN revises stat lines during a game and
+// a wrong freeze is permanent - so waiting for the whistle costs nothing.
+export function freezable(bet, status) {
+  if (bet?.settled) return false;
+  if (!TERMINAL.has(status.state)) return false;
+  if (!status.legs.length) return false;
+  // One dead leg in a finished game decides the whole bet whatever the others
+  // say, because a parlay cannot recover. A win needs all of them home.
+  if (status.state === 'lost') {
+    return status.legs.some((l) => DEAD.has(l.prog.state) && gameOver(l));
+  }
+  return status.legs.every(gameOver);
+}
+
+export function snapshot(bet, status, now = Date.now()) {
+  return {
+    state: status.state,
+    returned: status.returned,
+    legsHit: status.legsHit,
+    legsTotal: status.legsTotal,
+    at: now,
+    legs: status.legs.map(snapLeg),
+  };
+}
+
+// The snapshot read back out, in the exact shape betStatus returns, so nothing
+// downstream needs to know a bet is frozen.
+function thawed(bet) {
+  const s = bet.settled;
+  const byId = new Map((s.legs || []).map((l) => [l.id, l]));
+  const legs = (bet.legs || []).map((leg) => {
+    const f = byId.get(leg.id);
+    return {
+      leg,
+      prog: f
+        ? { ...f, final: true, game: null }
+        : { ...bare('unknown', 'not recorded'), line: null, current: null, game: null },
+    };
+  });
+
+  return {
+    state: s.state,
+    legs,
+    legsHit: s.legsHit ?? legs.filter((l) => DONE.has(l.prog.state)).length,
+    legsTotal: s.legsTotal ?? legs.length,
+    outstanding: [],
+    toWin: profit(bet.stake, bet.odds),
+    returned: s.returned ?? 0,
+    frozen: true,
+    settledAt: s.at || null,
   };
 }
 

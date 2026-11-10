@@ -30,6 +30,16 @@ export const state = {
   boxscores: new Map(),     // eventId -> normalized box score
   playerStats: new Map(),   // espn athleteId -> aggregated line + fantasy points
 
+  // Flattened out of the box scores so the feed can ask about one play
+  // without knowing which game it came from.
+  winProb: new Map(),       // playId  -> { home, swing }  (0..1)
+  drives: new Map(),        // eventId -> drive[] in order
+
+  // "What did I miss." awayAt is the newest play the feed had rendered when
+  // the tab was last hidden; everything newer than it is marked unread until
+  // the divider is dismissed. null means there is nothing to catch up on.
+  away: { at: null, count: 0 },
+
   panel: { open: true, tab: 'leaders', leaderCat: 'fpts', leaderPos: 'all', userPicked: false },
 
   // mode = significance; types = play-type chips (empty set means no type filter)

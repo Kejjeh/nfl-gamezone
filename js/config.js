@@ -12,7 +12,13 @@ export const INTERVALS = {
   scoreboard: 6000,
   plays:     10000,
   matchups:  25000,
-  boxscores: 30000,   // ~19 KB gzipped per game; stats move slower than plays
+  // 49-59 KB gzipped per game, mean 55, measured across five finished Week 8
+  // summaries - not the ~19 KB this comment used to claim. The payload also
+  // carries per-play win probability and the drive list, which the feed tiers
+  // and the panel both read, and it grows all afternoon as drives accumulate.
+  // It is three quarters of the whole network budget, so change this interval
+  // before any other.
+  boxscores: 30000,
   league:   600000,
   idle:      60000,   // used for every poller when nothing is live
 };

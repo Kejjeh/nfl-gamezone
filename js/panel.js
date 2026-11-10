@@ -68,6 +68,28 @@ function fptsFor(athleteId) {
   return rec ? rec.fpts : null;
 }
 
+// How the game actually went, in 25 lines rather than 197. ESPN writes the
+// "8 plays, 56 yards, 3:33" description itself, so it is printed rather than
+// rebuilt from parts that could disagree with it. Newest first, matching the
+// feed - the drive you want is almost always the last one.
+function driveStrip(eventId) {
+  const drives = state.drives.get(String(eventId));
+  if (!drives?.length) return '';
+  const rows = drives.slice().reverse().map((d) => {
+    const colour = espn.colorForAbbr(d.team) || 'var(--fg-3)';
+    return `<li class="dv-row${d.isScore ? ' is-score' : ''}" style="--team:${colour}">
+        <span class="dv-bar"></span>
+        <span class="dv-team">${esc(d.team)}</span>
+        <span class="dv-desc">${esc(d.description)}</span>
+        <span class="dv-res">${esc(d.result)}</span>
+      </li>`;
+  }).join('');
+  return `<section class="dv">
+      <div class="dv-head"><h3>Drives</h3><span class="dv-n num">${drives.length}</span></div>
+      <ol class="dv-list">${rows}</ol>
+    </section>`;
+}
+
 function renderGame(eventId) {
   const game = state.games.get(eventId);
   const bs = state.boxscores.get(eventId);
@@ -87,6 +109,8 @@ function renderGame(eventId) {
         ? `Q${game.period || ''} ${game.clock || ''}`
         : game.detail || '')}</div>
     </div>`;
+
+  html += driveStrip(eventId);
 
   for (const [catName, view] of Object.entries(VIEWS)) {
     const blocks = [];
@@ -229,7 +253,9 @@ function renderLeaders() {
     // filtered board that is empty only because they have not arrived yet is
     // a different thing from a slate with no stats, and must say so rather
     // than look like an empty week.
-    list = pos !== 'all' && !espn.rostersReady()
+    // DEF rows are synthesised per team and carry their own position, so they
+    // never wait on the rosters.
+    list = pos !== 'all' && pos !== 'DEF' && !espn.rostersReady()
       ? `<div class="panel-empty">Positions are still loading.<br>They arrive with the player rosters.</div>`
       : pos !== 'all'
         ? `<div class="panel-empty">No ${esc(box.POSITIONS[pos]?.label || pos)} stats yet.</div>`
@@ -252,8 +278,16 @@ function renderLeaders() {
     }).join('') + `</ol>`;
   }
 
+  // Say what a DEF total cannot see rather than quietly reading low. Empty for
+  // any league that does not score blocked kicks.
+  const gaps = pos === 'DEF' ? scoring.defenseGaps() : [];
+  const note = gaps.length
+    ? `<p class="ld-note">Not counted: ${esc(gaps.join(', '))} - the box score
+       does not report them. Everything else matched Sleeper exactly.</p>`
+    : '';
+
   return `<div class="ld-chips">${chips}</div>
-          <div class="ld-chips ld-pos">${posChips}</div>${list}`;
+          <div class="ld-chips ld-pos">${posChips}</div>${list}${note}`;
 }
 
 /* ---------- shell ---------- */

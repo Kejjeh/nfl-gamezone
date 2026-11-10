@@ -102,7 +102,21 @@ export const statusFor = (bet) => core.betStatus(bet, ctx());
 
 export function allStatuses() {
   const c = ctx();
-  return state.bets.map((bet) => ({ bet, status: core.betStatus(bet, c) }));
+  const rows = state.bets.map((bet) => ({ bet, status: core.betStatus(bet, c) }));
+
+  // Freeze anything that has just been decided. This is the only read path the
+  // UI uses, so it is where a settlement gets caught before the week rolls over
+  // and the games it was resolved against disappear from the scoreboard.
+  let froze = 0;
+  for (const row of rows) {
+    if (!core.freezable(row.bet, row.status)) continue;
+    row.bet.settled = core.snapshot(row.bet, row.status);
+    row.status = core.betStatus(row.bet, c);
+    froze += 1;
+  }
+  if (froze) save();
+
+  return rows;
 }
 
 // Every athlete any open bet depends on - what the Worker needs to poll, and
@@ -110,6 +124,7 @@ export function allStatuses() {
 export function trackedAthletes() {
   const ids = new Set();
   for (const bet of state.bets) {
+    if (bet.settled) continue;                 // decided; nothing left to watch
     for (const leg of bet.legs) if (leg.athleteId) ids.add(String(leg.athleteId));
   }
   return ids;

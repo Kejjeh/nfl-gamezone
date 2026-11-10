@@ -137,14 +137,33 @@ export function render() {
   el.append(frag);
 }
 
+// One path for selecting a game, so the keyboard and the mouse cannot drift
+// apart. null means the whole slate.
+export function select(id) {
+  state.filters.gameId = id == null ? null : String(id);
+  render();
+  const feed = document.getElementById('feed');
+  if (feed) feed.scrollTop = 0;
+  emit('filters');
+}
+
+// Step through the rail in the order it is drawn. Stepping off either end
+// lands on the whole slate rather than wrapping, so there is always a way
+// back out without reaching for the mouse.
+export function step(dir) {
+  const games = sortedGames();
+  if (!games.length) return;
+  const i = games.findIndex((g) => String(g.id) === String(state.filters.gameId));
+  if (i === -1) { select(games[dir > 0 ? 0 : games.length - 1].id); return; }
+  const next = i + dir;
+  select(next < 0 || next >= games.length ? null : games[next].id);
+}
+
 export function wire() {
   document.getElementById('rail').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-game]');
     if (!btn) return;
     const id = btn.dataset.game;
-    state.filters.gameId = state.filters.gameId === id ? null : id;
-    render();
-    document.getElementById('feed').scrollTop = 0;
-    emit('filters');
+    select(state.filters.gameId === id ? null : id);
   });
 }

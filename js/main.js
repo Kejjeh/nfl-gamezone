@@ -600,6 +600,8 @@ function wireSettings() {
     if (store.get('sleeperUser') || store.get('sleeperSkipped')) $('#setup').hidden = true;
   });
 
+  wireKeys();
+
   // Any click is a user gesture: enough to let WebAudio start.
   document.addEventListener('click', () => { if (state.settings.sound) alerts.unlockAudio(); },
     { once: true });
@@ -613,6 +615,37 @@ function parseUrl() {
   if (w >= 1 && w <= 22) state.weekOverride = w;
   const t = parseInt(q.get('seasontype'), 10);
   if (t >= 1 && t <= 3) state.seasonType = t;
+}
+
+// The filter chips, left to right. Numbering them is the whole shortcut: the
+// order on screen is the order on the keyboard, so there is nothing to learn.
+const KEY_MODES = ['all', 'big', 'scoring', 'redzone', 'mine'];
+
+// A dashboard you glance at should not need the mouse. j/k walk the rail, g
+// goes back to the whole slate, p swings the panel, and the number keys pick
+// a filter. Nothing here fires while a field has focus or a dialog is open.
+function wireKeys() {
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t instanceof HTMLElement
+      && (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
+    if (document.querySelector('.overlay:not([hidden])')) return;
+
+    const mode = KEY_MODES[Number(e.key) - 1];
+    if (mode) { feed.setMode(mode); e.preventDefault(); return; }
+
+    switch (e.key) {
+      case 'j': rail.step(1); break;
+      case 'k': rail.step(-1); break;
+      case 'g': rail.select(null); break;
+      // The panel is its own screen on a phone, reached from the bottom bar,
+      // so there is nothing for this key to toggle there.
+      case 'p': if (!PHONE.matches) document.getElementById('btn-panel')?.click(); break;
+      default: return;
+    }
+    e.preventDefault();
+  });
 }
 
 async function boot() {

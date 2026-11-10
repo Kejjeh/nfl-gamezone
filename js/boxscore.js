@@ -8,6 +8,7 @@ import { state } from './state.js';
 import * as espn from './espn.js';
 import * as scoring from './scoring.js';
 import * as bridge from './bridge.js';
+import { TEAMS } from './teams.js';
 
 // Fantasy scoring only needs the first five. The rest are here for bet
 // markets - tackles, sacks and return yards are all commonly priced - and for
@@ -27,7 +28,23 @@ export async function refresh(eventIds) {
       console.warn('[boxscore] failed', id, err);
     }
   }
+  rebuildContext();
   rebuildPlayerTable();
+}
+
+// Win probability and drives, flattened across every game so a caller with a
+// play id does not have to know which box score it came from. Cheap enough to
+// redo wholesale on every poll, which keeps it impossible for a stale entry
+// to survive a game being re-fetched.
+export function rebuildContext() {
+  const wp = new Map();
+  const dr = new Map();
+  for (const box of state.boxscores.values()) {
+    if (box.winProb) for (const [id, v] of box.winProb) wp.set(id, v);
+    if (box.drives?.length) dr.set(String(box.eventId), box.drives);
+  }
+  state.winProb = wp;
+  state.drives = dr;
 }
 
 // espnAthleteId -> aggregated line. A player appears in one game only, so no
@@ -35,10 +52,13 @@ export async function refresh(eventIds) {
 export function rebuildPlayerTable() {
   const table = new Map();
   const fgByAthlete = new Map();
+  const twoPtByAthlete = new Map();
+  const twoPtMissed = [];
 
   for (const box of state.boxscores.values()) {
     const game = state.games.get(box.eventId);
     for (const team of box.teams) {
+      creditTwoPoints(team, twoPtByAthlete, twoPtMissed);
       const opp = game
         ? (game.home.abbr === team.abbr ? game.away.abbr : game.home.abbr)
         : null;
@@ -75,12 +95,86 @@ export function rebuildPlayerTable() {
   }
 
   for (const rec of table.values()) {
-    rec.fpts = scoring.totalFor(rec.cats, fgByAthlete.get(rec.id));
+    rec.fpts = scoring.totalFor(rec.cats, fgByAthlete.get(rec.id), twoPtByAthlete.get(rec.id));
   }
+
+  // A conversion scored by somebody with no box-score row is two points nobody
+  // gets. It should not happen - every converter has a stat line - so say so
+  // rather than let the total read quietly low.
+  if (twoPtMissed.length) {
+    console.warn(`[scoring] ${twoPtMissed.length} two-point conversion(s) unmatched:`,
+      twoPtMissed.join(', '));
+  }
+
+  addDefences(table);
 
   state.playerStats = table;
   return table;
 }
+
+// Two-point conversions carry names, not athlete ids - exactly like field-goal
+// distances - so they are matched back onto the team's own box-score rows by
+// normalised name. Scoped to the one team, which is what keeps the match safe:
+// a name has to collide inside a single roster to go wrong.
+function creditTwoPoints(team, byAthlete, missed) {
+  if (!team.twoPt?.length) return;
+
+  const byName = new Map();
+  for (const cat of Object.values(team.categories || {})) {
+    for (const row of cat.rows || []) {
+      if (!row.id) continue;
+      const key = bridge.normName(row.name);
+      if (!key) continue;
+      if (!byName.has(key)) byName.set(key, row.id);
+    }
+  }
+
+  const award = (name, kind) => {
+    const id = byName.get(bridge.normName(name));
+    if (!id) { missed.push(`${name} (${team.abbr} ${kind})`); return; }
+    const rec = byAthlete.get(id) || { pass: 0, rec: 0, rush: 0 };
+    rec[kind] += 1;
+    byAthlete.set(id, rec);
+  };
+
+  for (const c of team.twoPt) {
+    if (c.kind === 'run') award(c.rusher, 'rush');
+    else { award(c.passer, 'pass'); award(c.receiver, 'rec'); }
+  }
+}
+
+// One row per team defence, keyed by the team abbreviation.
+//
+// That key is not a convenience: it is the id Sleeper itself uses for a D/ST,
+// so a DEF row needs no bridge and Diagnostics can check it against Sleeper the
+// same way it checks a receiver. A team defence is not an athlete and has no
+// ESPN athlete id, so nothing else in the table can collide with it.
+function addDefences(table) {
+  for (const box of state.boxscores.values()) {
+    const game = state.games.get(box.eventId);
+    for (const team of box.teams) {
+      if (!team.defense || !team.abbr || team.abbr === '??') continue;
+      const opp = game
+        ? (game.home.abbr === team.abbr ? game.away.abbr : game.home.abbr)
+        : null;
+      const def = scoring.defensePoints(team.defense);
+      table.set(team.abbr, {
+        id: team.abbr,
+        name: `${TEAM_NAME.get(team.abbr) || team.abbr} D/ST`,
+        short: `${team.abbr} D/ST`,
+        pos: 'DEF',
+        team: team.abbr,
+        opp,
+        eventId: box.eventId,
+        cats: {},
+        def,
+        fpts: Math.round(def.pts * 100) / 100,
+      });
+    }
+  }
+}
+
+const TEAM_NAME = new Map(TEAMS.map(([, abbr, short]) => [abbr, short]));
 
 /* ---------- leaders ---------- */
 
@@ -180,7 +274,7 @@ export const CATEGORIES = {
   },
 };
 
-function summaryLine(r) {
+export function summaryLine(r) {
   const bits = [];
   const p = r.cats.passing;
   const ru = r.cats.rushing;
@@ -190,6 +284,21 @@ function summaryLine(r) {
   if (re && n(re.receivingYards)) bits.push(`${n(re.receivingYards)} rec`);
   const td = n(p?.passingTouchdowns) + n(ru?.rushingTouchdowns) + n(re?.receivingTouchdowns);
   if (td) bits.push(`${td} TD`);
+
+  // A team defence has no stat line at all - its numbers are counts assembled
+  // from three different parts of the payload - so it needs its own summary or
+  // it reads as a blank row next to a double-digit total.
+  if (r.pos === 'DEF' && r.def) {
+    const d = r.def;
+    const parts = [];
+    if (d.sacks) parts.push(`${d.sacks} sack${d.sacks === 1 ? '' : 's'}`);
+    if (d.ints) parts.push(`${d.ints} INT`);
+    if (d.fumRec) parts.push(`${d.fumRec} FR`);
+    if (d.defTd) parts.push(`${d.defTd} TD`);
+    if (d.safeties) parts.push(`${d.safeties} safety`);
+    if (d.ptsAllowed != null) parts.push(`${d.ptsAllowed} allowed`);
+    return parts.join(' · ') || '—';
+  }
 
   // A kicker has none of the above, so without this they read as a blank line
   // next to a double-digit fantasy total.
@@ -205,10 +314,10 @@ function summaryLine(r) {
   return bits.join(' · ') || '—';
 }
 
-// Fantasy position groups for the leaders board. FLEX mirrors the league's
-// FLEX slot. There is no DEF group on purpose: a team defence is not an
-// athlete, so it never appears in the box-score player table, and a chip that
-// could only ever show an empty board would read as a bug.
+// Fantasy position groups for the leaders board, mirroring the league's own
+// slots. DEF matches the synthetic team-defence rows addDefences() builds.
+// Every category other than fpts and tds reads a skill-position stat line, so a
+// defence scores 0 there and the leaders board drops it on its own.
 export const POSITIONS = {
   all: { label: 'All', match: () => true },
   QB: { label: 'QB', match: (p) => p === 'QB' },
@@ -217,6 +326,7 @@ export const POSITIONS = {
   TE: { label: 'TE', match: (p) => p === 'TE' },
   FLEX: { label: 'FLEX', match: (p) => p === 'RB' || p === 'WR' || p === 'TE' },
   K: { label: 'K', match: (p) => p === 'K' },
+  DEF: { label: 'DEF', match: (p) => p === 'DEF' },
 };
 
 export function leaders(categoryKey, limit = 12, pos = 'all') {
@@ -247,7 +357,9 @@ export function validate() {
   // they are the real test and `final` is the number to trust.
   const rows = { final: [], live: [] };
   for (const rec of state.playerStats.values()) {
-    const sid = state.bridge.athleteToSleeper.get(rec.id);
+    // A D/ST is keyed by its team abbreviation, which is already Sleeper's own
+    // id for it, so it needs no bridge lookup.
+    const sid = rec.pos === 'DEF' ? rec.id : state.bridge.athleteToSleeper.get(rec.id);
     if (!sid || !sleeperPts.has(sid)) continue;
     const theirs = Number(sleeperPts.get(sid));
     if (!Number.isFinite(theirs)) continue;

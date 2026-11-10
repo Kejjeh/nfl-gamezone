@@ -15,10 +15,33 @@ const cap = () => (window.innerWidth <= 700 ? FEED_CAP_SMALL : FEED_CAP);
 import * as espn from './espn.js';
 import * as bridge from './bridge.js';
 import * as alerts from './alerts.js';
+import * as box from './boxscore.js';
 
 const rendered = new Map();   // playId -> node
 
 const BIG_GAIN = 20;
+
+// How far a play has to move the game to count as a big one on its own.
+// 5 points of win probability. Measured over a full 197-play game: 13 plays
+// clear it, 2 of them by more than 20 - selective enough to stay a tier
+// rather than swallow the feed.
+const BIG_SWING = 0.05;
+
+// A kickoff's swing belongs to the play before it. ESPN's entry for a scoring
+// play carries the number from before the score, so the jump lands on
+// whatever follows - which is the kickoff. Measured on a Week 8 slate: 12 of
+// the 160 plays this rule promoted were kickoffs, one of them a touchback
+// wearing a 46% tag. Punts keep the rule; a shank on a close possession
+// really does move a game.
+const INHERITS_SWING = /^kickoff$/i;
+
+// Win probability is only ever as complete as the last box-score poll, and a
+// play that arrived seconds ago will not have an entry yet. Absent means
+// "unknown", never "no swing", so callers fall through to the other rules
+// instead of treating a missing number as a quiet play.
+const swingOf = (p) => (INHERITS_SWING.test(p.type)
+  ? null
+  : state.winProb.get(String(p.id))?.swing ?? null);
 
 // Measured over a full game: 26 of 174 plays are timeouts or the coin toss.
 // "Official Timeout at 11:12" carries no information for a viewer, and at 15%
@@ -71,6 +94,11 @@ function tierOf(p) {
   if (p.isTurnover) return 'key';
   if (p.fan) return 'key';
   if (ADMIN.test(p.type)) return 'log';
+  // A play can decide a game without scoring, turning the ball over or
+  // gaining twenty yards: a fourth-down stop, a missed field goal, a sack on
+  // third and goal. Nothing else in this function can see those, which is the
+  // whole reason win probability is worth carrying.
+  if (swingOf(p) >= BIG_SWING) return 'key';
   if (isRedZonePlay(p)) return 'note';
   if (!LONG_BY_NATURE.test(p.type) && Math.abs(p.yards) >= BIG_GAIN) return 'note';
   if (p.isPenalty) return 'note';
@@ -87,6 +115,15 @@ function passes(p) {
     case 'scoring': return p.scoringPlay;
     case 'redzone': return isRedZonePlay(p);
     case 'mine': return !!(p.fan && p.fan.side === 'mine');
+    // Scores, turnovers, your starters, and anything that moved the game by
+    // five points of win probability.
+    //
+    // The first cut here was "not the log tier", which measured 1,233 of
+    // 2,604 plays on a full slate - 47%, which is not a filter. The note tier
+    // is broad by design (every red-zone snap, every 20-yard gain, every
+    // flag), so it belongs in the feed's colour, not behind this chip. Score
+    // plus key is 496, or 19%.
+    case 'big': { const t = tierOf(p); return t === 'score' || t === 'key'; }
     default: return true;
   }
 }
@@ -107,6 +144,11 @@ function tags(p) {
     out.push('<span class="tag tag--rz">Red zone</span>');
   }
   if (p.isPenalty && !p.scoringPlay) out.push('<span class="tag tag--pen">Flag</span>');
+  const sw = swingOf(p);
+  if (sw >= BIG_SWING) {
+    out.push(`<span class="tag tag--wp" title="Win probability moved this much">`
+      + `${Math.round(sw * 100)}% swing</span>`);
+  }
   return out.join('');
 }
 
@@ -226,14 +268,19 @@ export function ingest(plays, { flash = true } = {}) {
   }
 
   trim(list);
+  applyAwayMarker(list);
   showEmptyIfNeeded(list);
   return fresh.length;
 }
 
 function trim(list) {
   const max = cap();
-  while (list.children.length > max) {
-    const last = list.lastElementChild;
+  // Count and remove only play cards. The away divider is a child too, and
+  // trimming it off the bottom would silently lose the mark.
+  const cards = () => list.querySelectorAll('article.p');
+  while (cards().length > max) {
+    const last = list.querySelector('article.p:last-of-type');
+    if (!last) break;
     for (const [id, n] of rendered) if (n === last) { rendered.delete(id); break; }
     last.remove();
   }
@@ -259,7 +306,101 @@ export function rebuild() {
     frag.append(node);
   }
   list.append(frag);
+  applyAwayMarker(list);
   showEmptyIfNeeded(list);
+}
+
+/* ---------- what you missed ---------- */
+
+// Ordering is (ts, seq), the same pair insert() sorts the list by, so the
+// boundary a divider sits on is exactly the boundary the list already has.
+const isNewer = (a, b) => a.ts > b.ts || (a.ts === b.ts && a.seq > b.seq);
+
+function newestPlay() {
+  let best = null;
+  for (const p of state.plays.values()) if (!best || isNewer(p, best)) best = p;
+  return best ? { ts: best.ts, seq: best.seq } : null;
+}
+
+// Marked from every play we hold, not from what is on screen: a filter that
+// happened to be on while you were away must not change what counts as missed.
+export function markAway() {
+  if (state.away.at) return;          // already away - keep the earlier mark
+  state.away.at = newestPlay();
+}
+
+export function markBack() {
+  if (!state.away.at) return;
+  applyAwayMarker(listEl());
+  if (!state.away.count) clearAway();
+}
+
+export function clearAway() {
+  state.away.at = null;
+  state.away.count = 0;
+  document.querySelector('.feed-divider')?.remove();
+  renderAwayChip();
+}
+
+// Idempotent on purpose: drop any divider, then place one above the first
+// card older than the boundary. Runs after every ingest and rebuild, so the
+// mark survives new plays arriving and the filters changing under it.
+// The count comes from the list, not from state.plays.
+//
+// Those are different numbers: state.plays holds every play of every game,
+// while the list holds only what the current filters let through. Counting
+// the former and drawing the line in the latter put "30 plays" above 21
+// cards, which reads as a bug. Counting the cards above the line cannot
+// disagree with the line, whatever the filters are doing.
+// Divider and chip are one operation: the chip quotes the divider's count, so
+// redrawing one without the other is how they drift apart as plays arrive.
+function applyAwayMarker(list) {
+  placeAwayDivider(list);
+  renderAwayChip();
+}
+
+function placeAwayDivider(list) {
+  list.querySelector('.feed-divider')?.remove();
+  state.away.count = 0;
+  const at = state.away.at;
+  if (!at) return;
+
+  let above = 0;
+  for (const child of list.children) {
+    if (!child.matches('article.p')) continue;
+    const c = { ts: Number(child.dataset.ts || 0), seq: Number(child.dataset.seq || 0) };
+    if (isNewer(c, at)) { above += 1; continue; }
+    if (!above) return;                       // nothing new reached the list
+    state.away.count = above;
+    const div = document.createElement('div');
+    div.className = 'feed-divider';
+    div.innerHTML = `<span>${above} play${above === 1 ? '' : 's'} while you were away</span>`;
+    list.insertBefore(div, child);
+    return;
+  }
+  // Everything on screen is newer than the boundary - which happens on a
+  // long absence, once the trim has dropped every play you had already seen.
+  if (above) {
+    state.away.count = above;
+    const div = document.createElement('div');
+    div.className = 'feed-divider';
+    div.innerHTML = `<span>${above} play${above === 1 ? '' : 's'} while you were away</span>`;
+    list.append(div);
+  }
+}
+
+function renderAwayChip() {
+  const feed = document.getElementById('feed');
+  if (!feed) return;
+  feed.querySelector('.away-chip')?.remove();
+  const n = state.away.count;
+  if (!n) return;
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'away-chip';
+  chip.innerHTML = `<span>${n} new since you looked</span>`
+    + `<span class="ax" aria-hidden="true">&times;</span>`;
+  feed.prepend(chip);
 }
 
 export function showSkeleton() {
@@ -328,32 +469,61 @@ export function clearFollow() {
   rebuild();
 }
 
+// Following used to say only who. The whole line - team, position, the day's
+// stats and the fantasy total - is already sitting in the player table, so
+// the chip carries it rather than sending you to another tab to read it.
 function renderFollowChip() {
   const el = document.getElementById('follow-chip');
   if (!el) return;
   const f = state.filters;
   if (!f.athleteId) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
-  el.innerHTML = `<span class="fc-label">Following</span>
-    <span class="fc-name">${escAttr(f.athleteName || 'player')}</span>
+
+  const rec = state.playerStats.get(String(f.athleteId));
+  const name = escAttr(rec?.short || rec?.name || f.athleteName || 'player');
+  const colour = rec?.team ? (espn.colorForAbbr(rec.team) || 'var(--fg-3)') : 'var(--fg-3)';
+
+  // No record means the player has not touched the ball yet today - the
+  // follow still works, there is just nothing to total.
+  const meta = rec
+    ? [rec.pos, rec.team && rec.opp ? `${rec.team} vs ${rec.opp}` : rec.team,
+       box.summaryLine(rec)].filter(Boolean).join(' \u00b7 ')
+    : 'no stats yet';
+  const pts = rec && Number.isFinite(rec.fpts)
+    ? `<span class="fc-pts num">${rec.fpts.toFixed(1)}</span>` : '';
+
+  el.innerHTML = `<span class="fc-bar" style="--team:${colour}"></span>
+    <span class="fc-who">
+      <span class="fc-name">${name}</span>
+      <span class="fc-meta">${escAttr(meta)}</span>
+    </span>${pts}
     <button type="button" class="fc-x" id="follow-clear"
-      aria-label="Stop following ${escAttr(f.athleteName || 'player')}">&times;</button>`;
+      aria-label="Stop following ${name}">&times;</button>`;
 }
 
 const escAttr = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// The one way the significance filter changes, so the click handler and the
+// number keys cannot end up setting it differently.
+export function setMode(mode) {
+  state.filters.mode = mode;
+  const bar = document.getElementById('filters');
+  if (bar) {
+    for (const b of bar.children) {
+      b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    }
+  }
+  const feedEl = document.getElementById('feed');
+  if (feedEl) feedEl.scrollTop = 0;
+  rebuild();
+}
+
 export function wire() {
   const bar = document.getElementById('filters');
   bar.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-mode]');
-    if (!btn) return;
-    state.filters.mode = btn.dataset.mode;
-    for (const b of bar.children) {
-      b.setAttribute('aria-pressed', String(b === btn));
-    }
-    document.getElementById('feed').scrollTop = 0;
-    rebuild();
+    if (btn) setMode(btn.dataset.mode);
   });
 
   // Play-type chips: multi-select, none selected means no type filter.
@@ -381,5 +551,21 @@ export function wire() {
     document.getElementById('type-clear').hidden = state.filters.types.size === 0;
     document.getElementById('feed').scrollTop = 0;
     rebuild();
+  });
+
+  // Leaving the tab is the signal that you stopped watching. Coming back with
+  // plays you have not seen is the only moment the divider is worth drawing.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) markAway();
+    else markBack();
+  });
+
+  document.getElementById('feed')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.away-chip');
+    if (!chip) return;
+    // The cross dismisses; the chip itself takes you to where you left off.
+    if (e.target.closest('.ax')) { clearAway(); return; }
+    document.querySelector('.feed-divider')
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   });
 }

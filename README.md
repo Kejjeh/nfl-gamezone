@@ -41,11 +41,26 @@ Then **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`
 | `site.api.espn.com/.../scoreboard` | scores, clock, down/distance, red zone | 6 s |
 | `sports.core.api.espn.com/.../plays` | play-by-play text | whole game once, then tail every 10 s |
 | `api.sleeper.app/v1/league/.../matchups` | live fantasy points | 25 s |
-| `site.api.espn.com/.../summary?event=` | box scores, scoring plays | 30 s per live game |
+| `site.api.espn.com/.../summary?event=` | box scores, scoring plays, win probability, drives | 30 s per live game |
 | `site.api.espn.com/.../teams/{t}/roster` | player ID bridge | once a day |
 | `api.sleeper.app/v1/players/nfl` | player names and positions | once a day |
 
-Roughly **6–7 KB/s** with a full Sunday slate, about 23 MB an hour.
+Roughly **34 KB/s** late on a full Sunday slate, about 120 MB an hour, and the
+`summary` poll is 75% of it:
+
+| Poll | Measured | Rate on 14 games |
+|---|---|---|
+| scoreboard, 6 s | 13–21 KB gzip | ~3 KB/s |
+| plays tail, 10 s each | 4.8 KB gzip | ~7 KB/s |
+| `summary`, 30 s each | **49–59 KB gzip**, mean 55 | **~26 KB/s** |
+
+The earlier figure in this file was 6–7 KB/s and 23 MB an hour, and `config.js`
+described the summary as "~19 KB gzipped per game". Both were measured before
+the box-score poller existed in its current form and against games that had
+barely started; a summary grows all afternoon as drives accumulate, and five
+finished Week 8 games average 55 KB. Nothing here costs money — ESPN is free
+and unauthenticated — but the number was wrong by about 5×, so it is restated
+rather than quietly corrected.
 
 ### Two things worth knowing
 
@@ -93,19 +108,41 @@ js/config.js    endpoints, intervals, team-abbreviation aliases
 js/teams.js     the 32 franchises, baked in (see note below)
 js/store.js     localStorage with TTL, failure-tolerant
 js/state.js     one state object plus a minimal pub/sub
-js/espn.js      scoreboard, play tail paging, team rosters
+js/espn.js      scoreboard, play tail paging, team rosters, win probability, drives
 js/sleeper.js   league, rosters, live matchup, slim player cache
 js/bridge.js    ESPN athlete id  ->  Sleeper player id
 js/poller.js    interval scheduler with exponential backoff
 js/feed.js      cross-game merge, dedupe, filters, player follow, rendering
 js/boxscore.js  slate-wide player stat table and leader ranking
 js/scoring.js   fantasy points from stat lines, under league settings
-js/panel.js     the stats panel: My Team, leaders board, per-game box score
+js/panel.js     the stats panel: My Team, leaders board, per-game box score + drives
 js/rail.js      the game rail, with per-game starter counts
 js/matchup.js   the header score strip
 js/alerts.js    WebAudio chimes, flash, desktop notifications
 js/main.js      boot and wiring
 ```
+
+### Wide screens
+
+The three columns did not grow together. The rail and the panel are fixed
+widths and `.feed-list` is capped at 940px, so past about 1500px every extra
+pixel landed as dead space on one side of the plays. Measured at 1920: a
+1360px feed column holding a 940px list, with 80-character play text on a
+**124-character measure** — roughly double a comfortable one.
+
+Above 1600px the rail and panel take the extra width, the list is centred
+rather than left-hugged, and the play text gets a measure instead of filling
+whatever is there:
+
+| at 1920px | before | after |
+|---|---|---|
+| rail / panel | 220 / 340 | 272 / 408 |
+| dead space | 420px, all on the right | 145 left, 155 right |
+| text measure | 124 characters | **85** |
+| median play fills | 65% of a line | **94%** |
+
+`76ch` produces that 85. A proportional font's average glyph is narrower than
+its `0`, so `ch` units read about 12% wide for prose.
 
 `js/teams.js` is generated rather than fetched because
 `site.api.espn.com/.../teams` is the one ESPN path tested that omits
@@ -118,7 +155,7 @@ Clicking a game swings the right-hand panel to that game's box score, with every
 skill-position and kicking line scored into fantasy points. The Leaders tab
 ranks the whole slate across nine categories — fantasy points, passing, rushing
 and receiving yards, receptions, targets, touchdowns, completions and kicking —
-and cuts any of them by fantasy position: **All · QB · RB · WR · TE · FLEX · K**.
+and cuts any of them by fantasy position: **All · QB · RB · WR · TE · FLEX · K · DEF**.
 
 The position had to come from somewhere other than the obvious place. ESPN's
 box-score summaries carry **no athlete position at all**: measured on a full
@@ -132,9 +169,75 @@ players identically rather than each holding an opinion (ESPN says `PK` and
 
 Because of that the rosters now load *before* the Sleeper player dictionary:
 positions are useful with no league connected, and the old order left them
-blank whenever Sleeper was slow or unreachable. There is no DEF chip — a team
-defence is not an athlete, so it never enters the player table, and a chip that
-could only ever show an empty board would read as a bug.
+blank whenever Sleeper was slow or unreachable.
+
+### Two-point conversions
+
+A two-point conversion appears in **no stat line at all**. A quarterback who
+runs one in gains no rushing yard and no touchdown the box score will admit to,
+so he scores two points the stat sheet cannot see. Diagnostics found it rather
+than a hunch did: a finished slate read 132 of 134 exact, and both misses were
+exactly 2.00 low — Jordan Love 34.18 against Sleeper's 36.18, Baker Mayfield
+7.72 against 9.72. Both had run a conversion.
+
+They live in the scoring play's parenthetical, the same complete whole-game
+source field-goal distances come from. Scanning **104 games across weeks 3–9**
+turns up exactly four forms and no others:
+
+| Form | Seen |
+|---|---|
+| `<Passer> Pass to <Receiver> for Two-Point Conversion` | 22 |
+| `<Rusher> Run for Two-Point Conversion` | 10 |
+| `Two-Point Pass Conversion Failed` | 25 |
+| `Two-Point Run Conversion Failed` | 2 |
+
+A failure never carries a name and a success always does, so **requiring the
+name is what separates them** — no "Failed" test is needed, and a fifth form
+would be ignored rather than mis-scored. Sleeper pays the passer, the receiver
+and the rusher separately, so all three are credited.
+
+Like field goals the entry gives names and no athlete ids, so they are matched
+back onto that team's own box-score rows by normalised name — scoped to one
+roster, which is what makes the match safe. A conversion that finds no row is
+two points nobody gets, so it logs a warning instead of reading quietly low.
+On the slate above, none did.
+
+### Team defences
+
+A D/ST is not an athlete and has no stat line, so it has to be assembled. There
+is no one place in the payload that holds it, and **every obvious shortcut is
+wrong**. Each of these was measured on the full Week 8 slate before being
+accepted or rejected:
+
+| Count | Source | What was wrong with the obvious one |
+|---|---|---|
+| Sacks | the `defensive` group's per-player `sacks`, summed | nothing — agrees with the opponent's team stat on 10 of 10 team-sides, and handles half-sacks |
+| Takeaways | the **opponent's** team-stat `fumblesLost` | summing the team's own `fumblesRecovered` disagreed on **3 of 10** team-sides (GB 2 vs 1, TEN 3 vs 1, DAL 3 vs 1): it counts a player falling on his own team's fumble, which is not a takeaway |
+| Defensive TDs | `scoringPlays`, by the play's type text | both alternatives fail. Summing player rows double-counts a pick-six, which appears in the `defensive` group **and** the `interceptions` group — JAX read 26 against Sleeper's 20. The team-stat `defensiveTouchdowns` is wrong too: **LV reads 2 having scored none**, its only non-offensive score being a 95-yard kickoff return |
+| Safeties | `scoringPlays` with type `SF` | they are in no stat group at all — the same reason field-goal distance comes from here |
+| Points allowed | the opponent's score | — |
+| Yards allowed | the opponent's `totalYards` | only scored by leagues that set the `yds_allow_*` keys; an absent key contributes nothing rather than falling back to a guess |
+
+With those, **all 10 defences anyone in the league had started in Week 8 matched
+Sleeper to the cent** — CIN 4, MIN 7, NYJ −3, PIT 19, TB 18, JAX 20, LAR 10,
+DEN 2, NE 8, SEA 2.
+
+The rows are keyed by team abbreviation, which is not a convenience: that is
+already Sleeper's own player id for a D/ST, so a defence needs no bridge entry
+and Diagnostics checks it against Sleeper exactly the way it checks a receiver.
+Every leaders category other than fantasy points and touchdowns reads a
+skill-position stat line, so a defence scores 0 there and drops off those boards
+on its own.
+
+Two things it still cannot see, and the Leaders board says so under the DEF
+board rather than quietly reading low:
+
+- **Blocked kicks.** In no stat group, and not a scoring play. Week 8 contained
+  none, so there was no sample to verify a detector against.
+- **Return touchdowns are left out.** No league member started a team whose
+  returner scored, so whether Sleeper credits a kick- or punt-return touchdown
+  to the D/ST could not be checked. Leaving them out is what the 10 verified
+  defences support; adding them on a guess is what produced the LV error above.
 
 Points come from **box-score aggregates, not play text**. A box score is already
 reconciled: yards, receptions and touchdowns are single numbers, so mapping them
@@ -168,9 +271,13 @@ scoring check vs Sleeper
   live games: 49/57 exact
 ```
 
-Finished games are the real test. In a live game the two sources are sampled
-seconds apart, so a player who just gained yards reads higher here until
-Sleeper catches up.
+Finished games are the real test, and they are what caught the last scoring
+bug: on a finished slate the board read **132 of 134**, with both misses exactly
+2.00 low and both quarterbacks. See [Two-point conversions](#two-point-conversions).
+It now reads **134 of 134**.
+
+In a live game the two sources are sampled seconds apart, so a player who just
+gained yards reads higher here until Sleeper catches up.
 
 A live gap is one play wide, which is not the same as small: a 60-yard catch
 is seven points in PPR. Caught in the act during Week 9 — Denzel Boston read
@@ -230,6 +337,83 @@ whole once. The one-time cost is about 37 KB gzipped per game.
 
 Finished games are pulled too, so the morning slate is still in the feed when
 you open the page in the evening.
+
+### Which plays mattered
+
+A play is tiered `score`, `key`, `note` or `log`, and the tier drives the
+card's colour and weight. The first four rules are obvious — scoring plays,
+turnovers, your starters, admin lines — and between them they cannot see a
+fourth-down stop, a missed field goal, or a sack on third and goal. Those
+decide games and look like nothing in a box score.
+
+**Win probability is the fifth rule.** The `summary` payload the box-score
+poll already fetches carries a `winprobability` array, one entry per play, and
+its `playId` joins straight onto the play feed's own ids — measured **2,604 of
+2,604** across a full Week 8 slate, which is the opposite of the `espn_id`
+story below. A play that moves win probability by five points or more is
+promoted to `key` and tagged with the number.
+
+Measured over those 2,604 plays:
+
+| | count | share |
+|---|---|---|
+| scoring plays | 120 | 5% |
+| turnovers | 40 | 2% |
+| **leverage only** (neither of the above) | **148** | **6%** |
+
+So the rule roughly doubles the set of genuinely significant plays, entirely
+from plays nothing else in `tierOf()` could reach. By type, the 148 are 64
+receptions, 38 runs, 16 incompletions, 10 penalties, 10 sacks and **5 missed
+field goals** — a missed kick being exactly the play a box score cannot see.
+
+**Kickoffs are excluded,** which is why 148 and not 160. ESPN's entry for a
+scoring play carries the number from *before* the score, so the jump lands on
+whatever comes next, and what comes next is the kickoff: 12 of the first 160
+were kickoffs, one a touchback wearing a 46% tag. The test is anchored
+(`/^kickoff$/i`), so a *Kickoff Return Touchdown* still qualifies — one in
+this slate swung 17%. Punts keep the rule too.
+
+The **Big plays** filter shows `score` and `key`. The first cut was "anything
+that is not the log tier", which measured 1,233 of 2,604 — 47%, which is not a
+filter. The `note` tier is broad on purpose (every red-zone snap, every 20-yard
+gain, every flag) and belongs in the feed's colour rather than behind a chip.
+Score plus key is 496, or 19% of the slate; on a single game it is **18 plays
+out of 172**, against 8 for Scoring alone.
+
+### What you missed
+
+Leaving the tab is the signal that you stopped watching. Coming back draws a
+rule across the feed at the last play you saw, with a sticky chip that jumps
+to it.
+
+The count comes from the rendered list, not from `state.plays`. Those are
+different numbers — one holds every play of every game, the other only what
+the filters let through — and the first version said "30 plays" above 21
+cards, which reads as a bug. Counting the cards above the line cannot disagree
+with the line, whatever the filters are doing.
+
+### Drives
+
+The same `summary` payload carries `drives`, which is how the game actually
+went in 25 lines rather than 197. The panel's game tab lists them newest
+first, scoring drives highlighted. ESPN writes the `8 plays, 56 yards, 3:33`
+description itself, so it is printed rather than rebuilt from parts that could
+disagree with it.
+
+### Keyboard
+
+The filter chips are numbered left to right, so the order on screen is the
+order on the keyboard and there is nothing to learn.
+
+| Key | |
+|---|---|
+| `1`–`5` | All · Big plays · Scoring · Red zone · Mine |
+| `j` / `k` | next / previous game in the rail |
+| `g` | back to the whole slate |
+| `p` | show or hide the stats panel |
+| `Esc` | dismiss the panel while it overlays the feed |
+
+Nothing fires while a field has focus or a dialog is open.
 
 ## Phones
 
@@ -347,6 +531,35 @@ Two details that are easy to get wrong and are tested:
 
 A parlay is alive only while every leg is, which is the whole reason to track
 one: a dead leg kills it however well the rest are doing.
+
+### A decided bet stops being recomputed
+
+Settlement used to be derived fresh on every render, from the **current**
+scoreboard. That quietly destroyed the history. A leg resolves through
+`gameFor`, which looks the event up in `state.games`; once the week rolls over
+the event is no longer there, so the leg reads `unknown` — a state that is
+neither "dead" nor "done" — and the bet falls through to **open**. A bet won in
+Week 8 read as still running in Week 10, forever, and the money summary went
+with it: the stake went back to counting as live exposure instead of a
+settled return.
+
+So the moment a bet is decided *and* the games it depends on are over, the
+settlement is written onto the record and read back from there. The rules:
+
+- **Final means final.** An under already past its line is arithmetically dead
+  and the books would settle it, but ESPN revises stat lines during a game and
+  a wrong freeze is permanent — so it waits for the whistle.
+- **One dead leg in a finished game freezes the whole bet**, whatever the other
+  legs say, because a parlay cannot recover. A *win* needs every game home.
+- **An unmatched leg never freezes.** With no game there is nothing to be sure
+  about.
+- A frozen bet is dropped from the athletes the poller watches: it has nothing
+  left to learn.
+
+It is a snapshot of the progress the card already draws, not a second source of
+truth — the legs themselves are untouched. The logic lives in `bets-core.js`
+with the rest of the settlement maths, so the push Worker and the page can
+never disagree about it, and 25 of the suite's cases cover it.
 
 ### Alerts
 
@@ -486,10 +699,9 @@ new plays are announced without stealing focus.
   site, the toggle refuses to turn on and says so; the grant has to be made in
   the browser's own site settings.
 - **Audio needs one click first.** Browsers block WebAudio until a user gesture.
-- **Defensive stats are not scored.** The box score and leaders board cover
-  skill positions and kickers. Team defence scoring is a different shape - it is
-  per-roster rather than per-player - and is not computed; your matchup total
-  from Sleeper includes it regardless.
+- **A team defence misses blocked kicks and return touchdowns.** Everything
+  else matched Sleeper exactly on the Week 8 slate; those two had no sample to
+  verify against. See [Team defences](#team-defences).
 - **Live fantasy points run slightly ahead of Sleeper's.** The box score updates
   before Sleeper's tally does. The two agree exactly once a game is final.
 
