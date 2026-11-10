@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test:
-    name: Syntax check and bet settlement tests
+    name: Syntax check, bets and season scoring tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -37,3 +37,9 @@ jobs:
 
       - name: Bet settlement tests (offline)
         run: node tools/bets-test.mjs
+
+      # Offline and deterministic: the fixtures are real Sleeper stat records
+      # saved alongside the points Sleeper itself awarded for them, so this
+      # needs no network and its count does not move with the slate.
+      - name: Season scoring tests (offline)
+        run: node tools/season-test.mjs

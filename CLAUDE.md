@@ -21,7 +21,7 @@ node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (
 npm test                                        # runs all three
 ```
 
-- CI (`.github/workflows/tests.yml`) runs the syntax check and `bets-test.mjs` on every push to `main` and every PR. It leaves out `worker-test.mjs` (live ESPN).
+- CI (`.github/workflows/tests.yml`) runs the syntax check, `bets-test.mjs` and `season-test.mjs` on every push to `main` and every PR - every offline, deterministic check there is. It leaves out `worker-test.mjs` alone, because that one calls live ESPN. A new test harness belongs in CI unless it needs the network.
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
 - Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. **Its pass count is not fixed** - it branches on whether any game is live, so only `0 failed` is the expectation (42 on a finished slate, 30 on another). `bets-test.mjs` is offline and deterministic, so its count is. Anything else is proved by the syntax check plus loading the page.
