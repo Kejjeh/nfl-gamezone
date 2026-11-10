@@ -16,14 +16,15 @@ Read the relevant README section before changing the behaviour it describes.
 python -m http.server 8765              # serve; open http://localhost:8765 (file:// does NOT work: ES modules)
 for f in js/*.js; do node --check "$f"; done   # syntax check; expect no output
 node tools/bets-test.mjs                        # bet settlement; offline. expect: 102 passed, 0 failed
+node tools/season-test.mjs                      # season scoring; offline. expect: 76 passed, 0 failed
 node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (free). expect: 0 failed
-npm test                                        # runs both of the above
+npm test                                        # runs all three
 ```
 
 - CI (`.github/workflows/tests.yml`) runs the syntax check and `bets-test.mjs` on every push to `main` and every PR. It leaves out `worker-test.mjs` (live ESPN).
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
-- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. **Its pass count is not fixed** - it branches on whether any game is live, so only `0 failed` is the expectation (42 on a finished slate, 30 on another). `bets-test.mjs` is offline and deterministic, so its count is. Anything else is proved by the syntax check plus loading the page.
+- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. **Its pass count is not fixed** - it branches on whether any game is live, so only `0 failed` is the expectation (42 on a finished slate, 30 on another). `bets-test.mjs` is offline and deterministic, so its count is. Anything else is proved by the syntax check plus loading the page.
 - Every page load hits ESPN and Sleeper public endpoints (free, unauthenticated, about 6-7 KB/s on a full slate). Nothing costs money.
 
 ## Architecture map
@@ -39,6 +40,7 @@ npm test                                        # runs both of the above
 | `js/bridge.js` | ESPN athlete id -> Sleeper player id (name + team + position; `espn_id` only as fast path) |
 | `js/feed.js` | cross-game merge, dedupe, filters, player follow, `tierOf()` play tiers, rendering |
 | `js/boxscore.js`, `js/scoring.js` | slate-wide stat table, leader ranking, fantasy points from box-score aggregates |
+| `js/season.js`, `js/players.js` | season-long layer: Sleeper's weekly stat files scored under the league's settings (`season.js`, tested by `tools/season-test.mjs`), and the full-window sortable player table with ownership (`players.js`). Shares no data path with the live feed - no ESPN, no bridge |
 | `js/panel.js`, `js/rail.js`, `js/matchup.js` | stats panel (incl. the per-game drive strip), game rail with starter markers, header score strip |
 | `js/poller.js`, `js/state.js`, `js/store.js` | backoff scheduler, one state object + pub/sub, localStorage with TTL |
 | `js/alerts.js` | WebAudio chimes, flash, desktop notifications |
@@ -88,6 +90,36 @@ npm test                                        # runs both of the above
 - **The "while you were away" count is derived from the rendered list, never from
   `state.plays`.** Those differ by whatever the filters drop, and counting the latter
   put "30 plays" above 21 cards.
+- **League fantasy points are a dot product**, not a reimplementation:
+  `Σ stats[key] × scoring_settings[key]` over Sleeper's weekly stat files,
+  whose fields are named in the same vocabulary as the scoring settings.
+  Verified 1390/1390 player-weeks across nine weeks, defences included. No
+  ESPN and no bridge is involved, so `bridge.js` cannot affect these numbers.
+  Use the league's settings **unmerged** - `scoring.rules()` layers full-PPR
+  defaults underneath, which is right for the live leaders board and wrong
+  here, because a default weight for a key the league omits pays points
+  Sleeper never awarded. (This league's weights match the defaults on every
+  shared key but it scores nine more: `st_ff`, `st_fum_rec`, `fum_rec_td` and
+  friends. Eleven week-9 players score differently between the two.)
+- **Never read `/stats/nfl/regular/2026`** (the season aggregate). It lags by a
+  whole game for the teams that played most recently - 28 rows adrift on
+  2026-11-10, all MIN or BUF, Josh Allen 13.9 points short. Sum the weekly
+  files, which were each checked against Sleeper.
+- **The weekly cache key carries a fingerprint of the scoring rules**
+  (`wkpts:2026:9:<tag>`). The files are stored already scored, so an entry
+  written under one rule set is wrong under another. Invalidating when a league
+  connects does not cover it - the first connect races the first load. Do not
+  "simplify" the tag out of the key.
+- **`state.week` from Sleeper is the transaction week, not the last played
+  one.** On a Tuesday it is already the next week, with no stats and no points.
+  `display_week` is the one with results, but it lags into a Thursday game.
+  The matchup and the season table both follow the week the dashboard shows.
+- **Games played is counted, never read from `gp` or `gms_active`.** Over the
+  535 players who score more than a point, `gp` agreed with the counted truth
+  on 370 and `gms_active` on 474.
+- **Do not validate a season total against summed `players_points`.** A matchup
+  carries only the players on that roster that week, so a mid-season pickup is
+  undercounted - one player read 81.8 against 30.4 that way. Compare per week.
 - **The phone media query lives in two places** (`app.css` twice and `PHONE` in `js/main.js`);
   all copies must stay identical. Specificity bit once: `body.panel-closed main` outranked the
   phone rule. Check a phone change at 375x812 and sideways (812x375).
@@ -109,6 +141,7 @@ Load these with the Skill tool when the situation comes up; the user does not ne
 | Changing `scoring.js`, `bridge.js`, `boxscore.js` or ESPN/Sleeper parsing, where a wrong number or a silently unlinked player looks fine on screen | `sop-fail-loud` |
 | Touching the slip parser in `bets-core.js`, or adding a sportsbook format | `sop-parse-real-samples` |
 | Changing what ESPN or Sleeper endpoints are relied on, or the bridge's matching key | `sop-verify-upstream` |
+| Touching `season.js` scoring, the weekly cache key, or the player table's columns, where a wrong number ranks a waiver pickup and looks fine | `sop-fail-loud`, then re-run the per-week check against Sleeper |
 | Anything in `worker/` or `js/push.js`, where only the phone can confirm it worked | `sop-prove-remote-delivery` |
 | Proving a feed, panel or phone-layout change works in the running page (`gamezone` launch config, `?week=8` when nothing is live) | `run` |
 | Extending tests beyond bets/worker (e.g. `scoring.js` against known Sleeper totals) | `engineering:testing-strategy` |
@@ -121,12 +154,16 @@ Load these with the Skill tool when the situation comes up; the user does not ne
 
 ## Before you finish any task
 
-1. `for f in js/*.js; do node --check "$f"; done` -> no output. Touched bets or the Worker? `npm test` -> both scripts `0 failed`.
+1. `for f in js/*.js; do node --check "$f"; done` -> no output. Touched bets, the season layer or the Worker? `npm test` -> all three scripts `0 failed`.
 2. Serve (`gamezone` launch config or `python -m http.server 8765`), load `/` and `/?week=8`:
-   the feed fills, the browser console shows no errors. For layout changes also check 375x812 and 812x375.
-3. If you touched scoring or the bridge: Settings -> Diagnostics with a league connected reads
+   the feed fills, the browser console shows no errors. For layout changes also check 375x812 and 812x375
+   (reload after resizing - the emulated device metrics do not re-run otherwise).
+3. Touched the season layer? Open the table (`t`), confirm the meta line names your league rather
+   than "full-PPR defaults", and re-run the per-week check against Sleeper - it must read `1390/1390`
+   or whatever the full count is for the weeks played.
+4. If you touched scoring or the bridge: Settings -> Diagnostics with a league connected reads
    "all league starters linked" and final games `N/N exact`. If you cannot connect a league, say so.
-4. `git diff --stat` -> only files you meant to change.
+5. `git diff --stat` -> only files you meant to change.
 
 ## Model routing
 
@@ -135,4 +172,6 @@ team aliases, new filter chips, rail/panel presentation.
 
 Escalate to Opus: `scoring.js` and field-goal distance logic, `bridge.js` matching rules,
 feed merge/dedupe and `tierOf()`, whole-game pull + tail paging in `espn.js`, poller backoff,
-and the phone breakpoint (CSS specificity across two files).
+the phone breakpoint (CSS specificity across two files), `season.js` scoring and cache keying,
+and `goToWeek()` in `main.js` (it tears down every game-keyed map and re-primes the alert
+baseline; getting it wrong merges two weeks into one feed or replays a week of touchdowns).

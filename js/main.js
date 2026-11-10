@@ -11,6 +11,8 @@ import * as matchup from './matchup.js';
 import * as alerts from './alerts.js';
 import * as boxscore from './boxscore.js';
 import * as panel from './panel.js';
+import * as players from './players.js';
+import * as season from './season.js';
 import * as bets from './bets.js';
 import * as betsUI from './bets-ui.js';
 import * as push from './push.js';
@@ -55,6 +57,7 @@ async function pollScoreboard() {
   state.status.lastUpdate = Date.now();
   rail.render();
   renderStatus();
+  renderWeekNav();
 }
 
 // Which games to pull plays for. Normally just the live ones. When a week is
@@ -208,6 +211,99 @@ function renderStatus() {
 }
 setInterval(renderStatus, 1000);
 
+/* ---------- views and week navigation ---------- */
+
+// 'feed' is the three-column live dashboard; 'players' is the full-window
+// season table, which needs the whole width and so replaces it rather than
+// living inside the panel column.
+function setView(view) {
+  state.view = view;
+  document.body.dataset.view = view;
+  $('#btn-view')?.setAttribute('aria-pressed', String(view === 'players'));
+  if (view !== 'players') return;
+  players.render();
+  players.ensureLoaded();
+}
+
+// The regular season is 18 weeks. Pre-season and the playoffs are a different
+// seasontype rather than a week past 18, and are reached with ?seasontype=.
+const WEEK_MIN = 1;
+const WEEK_MAX = 18;
+
+const shownWeek = () => state.weekOverride || state.week || null;
+
+// A week switch tears down and refetches everything, so the arrows are dead
+// until it lands. Two overlapping switches would interleave two weeks' plays.
+let switching = false;
+
+function renderWeekNav() {
+  const label = $('#wk-label');
+  const w = shownWeek();
+  if (label) label.textContent = w ? `Wk ${w}` : ' ';
+
+  const prev = $('#wk-prev');
+  const next = $('#wk-next');
+  if (prev) prev.disabled = !w || w <= WEEK_MIN || switching;
+  if (next) next.disabled = !w || w >= WEEK_MAX || switching;
+}
+
+// Moving the dashboard to another week. Everything keyed by game id has to go:
+// a different week is a different set of games, and leaving the old plays in
+// place would merge two weeks into one feed. Alerts stay suppressed across the
+// reload for the same reason they are at boot - ingesting a week of finished
+// plays would otherwise replay every touchdown in it.
+async function goToWeek(week) {
+  const w = Math.min(WEEK_MAX, Math.max(WEEK_MIN, week));
+  if (switching || w === shownWeek()) return;
+
+  switching = true;
+  state.primed = false;
+  state.weekOverride = w;
+  state.sleeperWeek = w;
+  renderWeekNav();
+
+  for (const m of [state.games, state.plays, state.playsMeta, state.boxscores,
+    state.playerStats, state.winProb, state.drives, state.redZone]) m.clear();
+  fullyLoaded.clear();
+  boxDone.clear();
+  state.filters.gameId = null;
+  feed.clearAway();
+
+  feed.showSkeleton();
+  rail.render();
+  panel.render();
+
+  try {
+    await pollScoreboard();
+    await pollPlays();
+    feed.rebuild();
+    await pollBoxscores();
+    if (state.sleeper.leagueId) await pollMatchups();
+  } catch (err) {
+    console.error('[week] switch failed', err);
+  } finally {
+    bets.resetAlertBaseline();
+    state.primed = true;
+    switching = false;
+    renderWeekNav();
+    // The table's week scope follows the dashboard, so it has to re-render
+    // even when the view it lives in is not the one on screen.
+    players.render();
+  }
+
+  const url = new URL(location.href);
+  url.searchParams.set('week', String(w));
+  history.replaceState(null, '', url);
+}
+
+function wireViews() {
+  $('#btn-view')?.addEventListener('click', () => {
+    setView(state.view === 'players' ? 'feed' : 'players');
+  });
+  $('#wk-prev')?.addEventListener('click', () => goToWeek((shownWeek() || 1) - 1));
+  $('#wk-next')?.addEventListener('click', () => goToWeek((shownWeek() || 1) + 1));
+}
+
 /* ---------- Sleeper ---------- */
 
 async function connectSleeper(username, leagueId) {
@@ -215,10 +311,16 @@ async function connectSleeper(username, leagueId) {
   store.set('sleeperUser', state.sleeper.username);
   store.set('sleeperLeague', state.sleeper.leagueId);
 
-  try {
-    const st = await sleeper.getNflState();
-    state.sleeperWeek = st?.week || null;
-  } catch (err) { /* fall back to ESPN's week */ }
+  // The matchup follows whatever week the dashboard is showing, which
+  // pollMatchups already falls back to. It used to be set from Sleeper's own
+  // /state/nfl `week`, which is the *transaction* week: from Tuesday it has
+  // already rolled to a week with no results. That read as a 0.0-0.0 matchup
+  // beside a finished slate, and made the scoring check compare this week's
+  // box scores against next week's empty points - 0 of 146 "exact", with
+  // nothing actually wrong. `display_week` is the one with results, but it
+  // lags into a Thursday night game, so the week on screen is the honest
+  // answer in both directions.
+  state.sleeperWeek = shownWeek();
 
   // Once a league is connected, your own lineup is the most useful thing the
   // panel can show, so open on it - unless the tab was chosen by hand.
@@ -226,6 +328,11 @@ async function connectSleeper(username, leagueId) {
 
   await pollMatchups();
   pollers.league.start();
+  // Ownership and the scoring rules both come from the league, so the season
+  // table's rows and its points are only right once this has landed. If the
+  // weekly files were already scored under the full-PPR defaults, this throws
+  // them away and rescores them.
+  players.onSleeperChange();
   return league;
 }
 
@@ -632,6 +739,18 @@ function wireKeys() {
       && (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
     if (document.querySelector('.overlay:not([hidden])')) return;
 
+    // Week navigation and the view toggle work from either view.
+    if (e.key === '[') { goToWeek((shownWeek() || 1) - 1); e.preventDefault(); return; }
+    if (e.key === ']') { goToWeek((shownWeek() || 1) + 1); e.preventDefault(); return; }
+    if (e.key === 't') {
+      setView(state.view === 'players' ? 'feed' : 'players');
+      e.preventDefault();
+      return;
+    }
+
+    // Everything below steers the feed, which the season table is not.
+    if (state.view === 'players') return;
+
     const mode = KEY_MODES[Number(e.key) - 1];
     if (mode) { feed.setMode(mode); e.preventDefault(); return; }
 
@@ -672,6 +791,9 @@ async function boot() {
   bets.load();
   betsUI.wire(() => { panel.render(); push.syncBets(); });
   panel.wire();
+  players.wire();
+  wireViews();
+  setView('feed');
   wireMobile();
   // Three columns need room; between the phone breakpoint and that, the panel
   // overlays the feed, so it starts closed - but only until you say otherwise.
@@ -694,6 +816,7 @@ async function boot() {
     console.error('[boot] initial load failed', err);
   }
   feed.rebuild();
+  renderWeekNav();
 
   // Prime the bet baseline from the first box-score pull, so a leg that was
   // already at 26 yards when the page opened does not announce itself as a
@@ -717,7 +840,7 @@ async function boot() {
 
   // console access, and the hook the layout is checked through
   window.gz = { state, pollers, feed, bridge, espn, sleeper, bets, betsUI,
-    applyLayout, setMobileView };
+    players, season, applyLayout, setMobileView, setView, goToWeek };
 }
 
 boot();

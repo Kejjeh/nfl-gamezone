@@ -33,6 +33,14 @@
 
   <div id="matchup"></div>
 
+  <!-- Week navigation. Moves the whole dashboard - feed, rail and box scores -
+       to another week, and sets which week the Players table can scope to. -->
+  <div id="weeknav" role="group" aria-label="Week">
+    <button type="button" id="wk-prev" aria-label="Previous week">&#9666;</button>
+    <span id="wk-label" class="num">&nbsp;</span>
+    <button type="button" id="wk-next" aria-label="Next week">&#9656;</button>
+  </div>
+
   <div class="hdr-right">
     <div id="filters" role="group" aria-label="Filter plays">
       <button type="button" data-mode="all" aria-pressed="true" title="All plays (1)">All</button>
@@ -41,6 +49,17 @@
       <button type="button" data-mode="redzone" aria-pressed="false" title="Red-zone plays (4)">Red zone</button>
       <button type="button" data-mode="mine" aria-pressed="false" title="Plays involving your starters (5)">Mine</button>
     </div>
+
+    <button type="button" class="icon-btn" id="btn-view" aria-label="Players table"
+            aria-pressed="false" title="Season player table (t)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+        <line x1="3" y1="9" x2="21" y2="9"></line>
+        <line x1="3" y1="14" x2="21" y2="14"></line>
+        <line x1="10" y1="9" x2="10" y2="20"></line>
+      </svg>
+    </button>
 
     <button type="button" class="icon-btn" id="btn-panel" aria-label="Toggle stats panel"
             aria-pressed="true">
@@ -73,6 +92,45 @@
 
   <aside id="panel" aria-label="Statistics"></aside>
 </main>
+
+<!-- The Players view. Replaces the three-column dashboard rather than sitting
+     inside it: a table this wide has nowhere to live in the panel column.
+     Shown by body[data-view="players"]; the table body is rendered by
+     js/players.js, while the controls are markup so that typing in the search
+     box never rebuilds the box being typed into. -->
+<section id="players" aria-label="Season player table">
+  <div class="pl-bar">
+    <input type="search" id="pl-q" class="pl-search" placeholder="Search player or team"
+           aria-label="Search players" autocomplete="off" spellcheck="false"
+           autocapitalize="off">
+
+    <div class="pl-chips" id="pl-scope" role="group" aria-label="Scope">
+      <button type="button" data-scope="season" aria-pressed="true">Season</button>
+      <button type="button" data-scope="week" aria-pressed="false">Week</button>
+    </div>
+
+    <div class="pl-chips" id="pl-pos" role="group" aria-label="Position">
+      <button type="button" data-pos="all" aria-pressed="true">All</button>
+      <button type="button" data-pos="QB" aria-pressed="false">QB</button>
+      <button type="button" data-pos="RB" aria-pressed="false">RB</button>
+      <button type="button" data-pos="WR" aria-pressed="false">WR</button>
+      <button type="button" data-pos="TE" aria-pressed="false">TE</button>
+      <button type="button" data-pos="FLEX" aria-pressed="false">FLEX</button>
+      <button type="button" data-pos="K" aria-pressed="false">K</button>
+      <button type="button" data-pos="DEF" aria-pressed="false">DEF</button>
+    </div>
+
+    <div class="pl-chips" id="pl-own" role="group" aria-label="Ownership">
+      <button type="button" data-own="all" aria-pressed="true">Everyone</button>
+      <button type="button" data-own="mine" aria-pressed="false">My team</button>
+      <button type="button" data-own="free" aria-pressed="false">Free agents</button>
+      <button type="button" data-own="taken" aria-pressed="false">Rostered</button>
+    </div>
+  </div>
+
+  <div class="pl-meta" id="pl-meta" role="status"></div>
+  <div class="pl-wrap" id="pl-table"></div>
+</section>
 
 <!-- Phone navigation. A phone cannot show three panes at once, so it shows
      one, and this switches between them. Hidden above the mobile breakpoint. -->

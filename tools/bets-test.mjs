@@ -7,10 +7,9 @@
 //
 //   node tools/bets-test.mjs
 //
-// bets-core.js is a browser ES module and this repo has no package.json, so
-// Node would otherwise treat it as CommonJS and choke on `export`. It has no
-// imports of its own, so loading it through a data: URL is enough to get real
-// ESM semantics without duplicating the file or changing the project layout.
+// bets-core.js has no imports of its own, so it is loaded through a data: URL
+// rather than by path. That keeps this harness independent of how the repo is
+// packaged - it predates package.json and still passes without it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

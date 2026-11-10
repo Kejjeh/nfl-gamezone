@@ -1616,8 +1616,225 @@ body.panel-closed #panel { display: none; }
 .g-fan-mine { color: var(--mine); font-weight: 650; }
 .g-fan-opp  { color: var(--opp);  font-weight: 650; }
 
+/* =============================================================================
+   Players view
+
+   A full-window season table. It replaces the three-column dashboard rather
+   than living inside it: eight columns have nowhere to go in a 340px panel.
+   Deliberately monochrome - the feed earns its colour by tiering plays by
+   significance, but every row here is the same kind of thing, so colour is
+   spent only on the one distinction that drives an action: who owns the
+   player. Position and team are mono text, not badges.
+   ========================================================================== */
+
+#players { display: none; }
+
+body[data-view="players"] main { display: none; }
+body[data-view="players"] #players {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The play filters and the phone's pane switcher both steer the dashboard,
+   and none of what they steer is on screen here. */
+body[data-view="players"] #filters,
+body[data-view="players"] #mnav { display: none; }
+
+.pl-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.pl-search {
+  font: inherit;
+  font-size: var(--t-base);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 6px 10px;
+  min-width: 190px;
+}
+.pl-search::placeholder { color: var(--fg-3); }
+.pl-search:hover { border-color: var(--line-strong); }
+
+/* Same segmented control as the header's play filters, so "a group of
+   mutually exclusive options" looks the same everywhere in the app. */
+.pl-chips {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.pl-chips button {
+  font-size: var(--t-sm);
+  font-weight: 550;
+  color: var(--fg-3);
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.pl-chips button:hover:not(:disabled) { color: var(--fg-2); }
+.pl-chips button[aria-pressed="true"] { background: var(--surface-3); color: var(--fg); }
+.pl-chips button:disabled { opacity: 0.35; cursor: default; }
+
+.pl-meta {
+  flex: 0 0 auto;
+  padding: var(--s2) var(--s4);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  min-height: 27px;
+}
+
+.pl-wrap { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+table.pl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-base);
+}
+
+/* The header has to stay put: the whole point of a sortable table is scanning
+   down a column, and a column you cannot name is not worth sorting. */
+.pl-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  text-align: left;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+.pl-table th.pl-sort { padding: 0; }
+.pl-table th.pl-sort button {
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pl-table th.pl-c-num button { justify-content: flex-end; }
+.pl-table th.pl-sort button:hover { color: var(--fg-2); }
+.pl-table th.is-on { color: var(--fg); }
+.pl-arrow { font-size: 9px; line-height: 1; }
+
+.pl-table td {
+  padding: 7px var(--s3);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.pl-table tbody tr:hover td { background: var(--surface); }
+
+.pl-c-name {
+  color: var(--fg);
+  font-weight: 550;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-c-num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pl-pts { color: var(--fg); font-weight: 600; }
+.pl-pos, .pl-c-team { font-family: var(--mono); font-size: var(--t-xs); color: var(--fg-3); }
+
+/* Your own players get the same green the feed uses for your starters. */
+tr.is-mine td:first-child { box-shadow: inset 2px 0 0 var(--mine); }
+.pl-mine { color: var(--mine); font-weight: 600; }
+.pl-fa { color: #a8ccff; }
+.pl-taken { color: var(--fg-3); }
+
+.pl-msg, .pl-none {
+  padding: var(--s6) var(--s4);
+  text-align: center;
+  color: var(--fg-2);
+  font-size: var(--t-md);
+}
+.pl-msg .pl-sub {
+  display: block;
+  margin-top: var(--s2);
+  font-size: var(--t-sm);
+  color: var(--fg-3);
+}
+
+/* --- week navigation, in the header --- */
+
+#weeknav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+#weeknav button {
+  width: 24px; height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--fg-3);
+  font-size: 10px;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+#weeknav button:hover:not(:disabled) { color: var(--fg); background: var(--surface-2); }
+#weeknav button:disabled { opacity: 0.3; cursor: default; }
+#wk-label {
+  font-size: var(--t-sm);
+  font-family: var(--mono);
+  color: var(--fg-2);
+  min-width: 42px;
+  text-align: center;
+}
+
 /* Safari zooms the whole page when an input smaller than 16px takes focus,
-   and never zooms back out. The setup field is the only input here. */
+   and never zooms back out. Both of the app's text inputs need the floor. */
 @media (max-width: 700px), (max-height: 500px) and (max-width: 900px) {
-  #su-name { font-size: 16px; }
+  #su-name, .pl-search { font-size: 16px; }
+
+  /* The bar stacks, and the chip groups scroll sideways rather than wrapping
+     into four rows that leave no room for the table itself. */
+  .pl-bar { gap: var(--s2); padding: var(--s2) var(--s3); }
+  /* The three chip groups are wider than any phone, portrait or landscape, so
+     the search never shares their row - measured at 375 and 812 wide. Spanning
+     is what it does anyway; saying so costs nothing and a flex basis did not
+     buy a row back. */
+  .pl-search { width: 100%; min-width: 0; }
+  .pl-chips { overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .pl-chips::-webkit-scrollbar { display: none; }
+  .pl-chips button { min-height: 30px; }
+  .pl-meta { padding: var(--s2) var(--s3); }
+
+  /* Games and Best go; points, per-game and who owns him are what a phone is
+     being asked. The rest of the table still scrolls sideways. */
+  .pl-table :is(th, td):nth-child(6),
+  .pl-table :is(th, td):nth-child(8) { display: none; }
+  .pl-table td, .pl-table thead th { padding-inline: var(--s2); }
+  .pl-c-name { max-width: 140px; }
+
+  #weeknav button { width: 30px; height: 30px; }
+  #wk-label { min-width: 38px; }
 }

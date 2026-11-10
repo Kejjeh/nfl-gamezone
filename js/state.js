@@ -42,6 +42,25 @@ export const state = {
 
   panel: { open: true, tab: 'leaders', leaderCat: 'fpts', leaderPos: 'all', userPicked: false },
 
+  // Season-long fantasy numbers, summed from Sleeper's weekly stat files.
+  // `weeks` is week number -> { sleeperPlayerId: leaguePoints }; `through` is
+  // the last week it holds. Loaded on first open of the Players view, not at
+  // boot - the live feed does not need it and it is ~600 KB.
+  // `rulesTag` records which scoring settings these points were computed
+  // under, so a league connecting mid-session can tell that what is already
+  // loaded is now wrong.
+  season: {
+    weeks: new Map(), through: 0, loaded: false, loading: false,
+    error: null, rulesTag: null,
+  },
+
+  // The Players view: a full-window sortable table of every fantasy-relevant
+  // player, with ownership from the connected league. `week` null = season.
+  players: { week: null, pos: 'all', own: 'all', q: '', sort: 'pts', dir: 'desc' },
+
+  // 'feed' (the live three-column dashboard) or 'players'.
+  view: 'feed',
+
   // mode = significance; types = play-type chips (empty set means no type filter)
   // athleteId follows one player across every game; athleteName is kept only
   // so the chip can name them without a lookup.

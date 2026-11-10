@@ -90,16 +90,123 @@ failed to link. If it ever says anything other than "all league starters
 linked", the name matcher needs a new case — add it to the index in
 `bridge.js`.
 
-## Developing when nothing is live
+## Moving between weeks
 
-Pin a finished week:
+The arrows beside the matchup in the header move the whole dashboard — feed,
+rail, box scores and your matchup — to another week, and rewrite `?week=` so the
+URL can be shared or reloaded. `[` and `]` do the same from the keyboard.
+
+A switch tears down everything keyed by a game id, because a different week is a
+different set of games and leaving the old plays behind would merge two weeks
+into one feed. Alerts stay suppressed across the reload for the same reason they
+are at boot: ingesting a week of finished plays would otherwise replay every
+touchdown in it.
+
+`?week=8` still works as a starting point, and `?seasontype=1|2|3` selects pre /
+regular / post season. The regular season is 18 weeks; the playoffs are a
+different `seasontype`, not a week past 18, so the arrows stop there.
+
+**The matchup follows the week on screen.** It used to be set from Sleeper's own
+`/state/nfl` `week`, which is the *transaction* week: from Tuesday it has already
+rolled forward to a week with no results. That read as a 0.0–0.0 matchup beside a
+finished slate, and made the scoring check compare this week's box scores against
+next week's empty points — `0 of 146 exact`, with nothing actually wrong.
+`display_week` is the field that holds the last week with results, but it lags
+into a Thursday night game, so neither is right in both directions and the week
+being displayed is.
+
+## The season player table
+
+Press `t`, or the table icon in the header, for a full-window sortable table of
+every fantasy-relevant player — 835 of them through week 9 — scored under your
+league's own settings, with ownership from your league's rosters. Your team and
+the waiver wire sit in one list, so "who is the best free-agent running back"
+is a position chip, an ownership chip and a sort.
+
+Sort by any column. Search matches a name or a team. Scope to the whole season
+or to the week the dashboard is on; selecting a week re-ranks by that week's
+points while games, per-game and best stay season-wide, which is the comparison
+worth having. Players on a bye are absent from a week rather than listed at
+zero, because zero reads as "played and did nothing".
+
+### Fantasy points are a dot product
+
+Sleeper publishes per-week stat files for every player, and names their fields
+in the same vocabulary as a league's scoring settings — `rec`, `fgm_30_39`,
+`def_td`, `pts_allow_7_13`. So league points are exactly:
 
 ```
-http://localhost:8765/?week=8
+points = Σ  stats[key] × scoring_settings[key]
 ```
 
-Completed games are pulled in full and the feed assembles exactly as it would on
-a Sunday. `?seasontype=1|2|3` selects pre / regular / post season.
+Measured against the league's own `matchups` endpoint, which is what Sleeper
+actually awarded: **1390 of 1390 player-weeks exact**, across all nine completed
+weeks, team defences included.
+
+| Week | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| Exact | 166/166 | 161/161 | 165/165 | 163/163 | 152/152 | 143/143 | 143/143 | 143/143 | 154/154 |
+
+Fifteen lines replace every piece of scoring machinery for historical weeks.
+There is also **no bridge in this path** — both sides are Sleeper ids, so none
+of `bridge.js`'s 58 unresolved athletes can affect these numbers. Ja'Marr Chase,
+the player whose null `espn_id` the bridge exists for, needs no special case here
+at all.
+
+### Season totals are summed from the weekly files
+
+There is a season aggregate at `/stats/nfl/regular/2026`, and it is **not** used.
+It lags by a whole game for whichever teams played most recently: measured
+2026-11-10, 28 rows adrift, every one of them Minnesota or Buffalo, every one
+last played in week 9. Josh Allen read 234 passing yards, a touchdown and an
+interception short — 13.9 points of a 206-point season.
+
+Summing the nine weekly files, each of which was checked against Sleeper, is the
+only total that agrees with what the league actually awarded week by week. It
+also makes games played exact and the weekly breakdown free.
+
+### Games played is counted, not read
+
+Both `gp` and `gms_active` exist on a stats record and neither is the number a
+per-game average should divide by. Against a count of the weeks a player has a
+stats row at all, over the 535 players who score more than a point: `gp` agreed
+on **370**, `gms_active` on **474**. So games are counted here.
+
+Every row that lacks `gp` entirely scores exactly 0.00, so nobody who matters is
+affected by its absence — only by its disagreement.
+
+### `players_points` is per roster-week, not a season total
+
+Summing a player's `players_points` across the season looks like an obvious
+check and is wrong: a matchup only carries the players on that roster that week,
+so anyone picked up mid-season is undercounted. One player read 81.8 in the table
+against 30.4 from that sum — he had been rostered in weeks 1, 7, 8 and 9 only.
+The table's figure is his actual production. Compare per week, not per season.
+
+### What it costs
+
+| Call | Gzipped | When |
+|---|---|---|
+| `/stats/nfl/regular/2026/{week}` | 67 KB | once per week of the season, on first open |
+| `/state/nfl` | 0.1 KB | once, cached 5 minutes |
+| `/league/{id}/rosters` | 1.9 KB | already fetched for the dashboard |
+
+About 600 KB on first open, which is why it loads when the view is first opened
+rather than at boot — the live feed never needs any of it. Weeks before the
+current one are final and cached for a week; the current one gets two minutes.
+
+The raw payloads are never stored. Nine of them is 4.8 MB against a ~5 MB
+`localStorage` cap, so each week is projected to `{ playerId: points }` the
+moment it arrives — about 32 KB a week.
+
+**The cache key carries a fingerprint of the scoring rules.** The files are
+stored already scored, so an entry written under one set of rules is simply
+wrong under another. Invalidating when a league connects cannot cover it: the
+first connect races the first load, and switching leagues would serve the
+previous league's points until something thought to clear them. Keying on the
+rules means a change misses the cache and refetches. This was a real bug —
+week 9 served points scored under the full-PPR defaults after the league had
+connected — and the key is what fixed it.
 
 ## Layout
 
@@ -115,6 +222,8 @@ js/poller.js    interval scheduler with exponential backoff
 js/feed.js      cross-game merge, dedupe, filters, player follow, rendering
 js/boxscore.js  slate-wide player stat table and leader ranking
 js/scoring.js   fantasy points from stat lines, under league settings
+js/season.js    Sleeper's weekly stat files, scored under the league's settings
+js/players.js   the full-window season player table
 js/panel.js     the stats panel: My Team, leaders board, per-game box score + drives
 js/rail.js      the game rail, with per-game starter counts
 js/matchup.js   the header score strip
@@ -411,9 +520,12 @@ order on the keyboard and there is nothing to learn.
 | `j` / `k` | next / previous game in the rail |
 | `g` | back to the whole slate |
 | `p` | show or hide the stats panel |
+| `t` | the season player table, and back |
+| `[` / `]` | previous / next week |
 | `Esc` | dismiss the panel while it overlays the feed |
 
-Nothing fires while a field has focus or a dialog is open.
+Nothing fires while a field has focus or a dialog is open. `t`, `[` and `]`
+work from either view; everything else steers the feed, which the table is not.
 
 ## Phones
 
@@ -704,6 +816,14 @@ new plays are announced without stealing focus.
   verify against. See [Team defences](#team-defences).
 - **Live fantasy points run slightly ahead of Sleeper's.** The box score updates
   before Sleeper's tally does. The two agree exactly once a game is final.
+- **The season table shows the top 400 rows of any sort.** 835 players at eight
+  cells each is twice what the capped play feed holds, and the useful part of a
+  sort is its top. The count says so, and search and the chips reach past it.
+- **A week that has not been played is absent from the season table.** Week 10
+  returned zero stat records on the Monday before it began, so the table stops
+  at `display_week`. Whether a weekly file fills in *during* a Sunday has not
+  been measured — the live feed and the stats panel are what cover an afternoon
+  in progress, and they come from ESPN rather than from these files.
 
 ## Privacy
 
