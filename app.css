@@ -1689,6 +1689,14 @@ body[data-view="players"] #mnav { display: none; }
 .pl-chips button[aria-pressed="true"] { background: var(--surface-3); color: var(--fg); }
 .pl-chips button:disabled { opacity: 0.35; cursor: default; }
 
+/* A `display` set by a class outranks the browser's own `[hidden]` rule, so
+   anything this view hides from script has to say so itself. Compare mode
+   hides the position and ownership chips because the slot supplies the
+   position and the two columns supply the ownership; table mode hides the
+   minimum-games control, which only means something against a replacement.
+   Same pattern as .overlay[hidden]. */
+.pl-chips[hidden], .pl-min[hidden], .pl-wrap[hidden], .pl-compare[hidden] { display: none; }
+
 .pl-meta {
   flex: 0 0 auto;
   padding: var(--s2) var(--s4);
@@ -1779,6 +1787,146 @@ tr.is-mine td:first-child { box-shadow: inset 2px 0 0 var(--mine); }
   color: var(--fg-3);
 }
 
+.pl-min {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-sm);
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.pl-min input {
+  font: inherit;
+  font-size: var(--t-sm);
+  font-family: var(--mono);
+  width: 46px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 5px 6px;
+}
+.pl-min input:hover { border-color: var(--line-strong); }
+
+/* --- compare: your lineup beside the free pool ---
+
+   The table answers "who scored"; this answers "could I do better in this
+   slot", which is a different shape of question - it pairs rather than ranks,
+   so the two sides sit side by side with your slot order on the left rather
+   than interleaved by points. Both sides scroll independently so a long free
+   pool never pushes your lineup off screen. */
+
+.pl-compare {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+.pl-compare .cm-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+  overflow: auto;
+}
+
+.cm-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.cm-head h3 {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--fg-2);
+  letter-spacing: 0.02em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-cols {
+  display: flex;
+  gap: var(--s3);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  flex: 0 0 auto;
+}
+.cm-cols span { width: 42px; text-align: right; }
+
+.cm-sep {
+  padding: var(--s2) var(--s4);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  background: var(--surface);
+  border-block: 1px solid var(--line);
+}
+
+/* An `ol` carries a 40px inline-start padding of its own, which on a phone
+   indents every row and squeezes the gap column off the edge. */
+.cm-list { list-style: none; margin: 0; padding: 0; }
+
+/* One grid for both sides, so your player and the free agent beside him line
+   their numbers up across the gutter. */
+.cm-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 42px 42px 48px;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+button.cm-row { transition: background 0.15s var(--ease); }
+button.cm-row:hover { background: var(--surface); }
+button.cm-row.is-on { background: var(--surface-2); }
+button.cm-row.is-on .cm-slot { color: var(--fg); }
+
+.cm-slot {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--fg-3);
+}
+.cm-who { min-width: 0; }
+.cm-name {
+  display: block;
+  font-size: var(--t-base);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+}
+.cm-n { font-size: var(--t-base); color: var(--fg-2); text-align: right; }
+
+/* The only coloured thing in the view: an upgrade exists at this slot. A
+   negative gap is the useful null result - you already have the best there is
+   - so it stays grey rather than reading as a warning. */
+.cm-gap {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg-3);
+  text-align: right;
+}
+.cm-gap.is-up { color: var(--mine); font-weight: 600; }
+
 /* --- week navigation, in the header --- */
 
 #weeknav {
@@ -1811,17 +1959,17 @@ tr.is-mine td:first-child { box-shadow: inset 2px 0 0 var(--mine); }
 }
 
 /* Safari zooms the whole page when an input smaller than 16px takes focus,
-   and never zooms back out. Both of the app's text inputs need the floor. */
+   and never zooms back out. Every input in the app needs the floor. */
 @media (max-width: 700px), (max-height: 500px) and (max-width: 900px) {
-  #su-name, .pl-search { font-size: 16px; }
+  #su-name, .pl-search, .pl-min input { font-size: 16px; }
 
   /* The bar stacks, and the chip groups scroll sideways rather than wrapping
      into four rows that leave no room for the table itself. */
   .pl-bar { gap: var(--s2); padding: var(--s2) var(--s3); }
-  /* The three chip groups are wider than any phone, portrait or landscape, so
-     the search never shares their row - measured at 375 and 812 wide. Spanning
-     is what it does anyway; saying so costs nothing and a flex basis did not
-     buy a row back. */
+  /* The chip groups are wider than any phone, portrait or landscape, so the
+     search never shares their row - measured at 375 and 812 wide. Spanning is
+     what it does anyway; saying so costs nothing and a flex basis did not buy
+     a row back. */
   .pl-search { width: 100%; min-width: 0; }
   .pl-chips { overflow-x: auto; scrollbar-width: none; max-width: 100%; }
   .pl-chips::-webkit-scrollbar { display: none; }
@@ -1834,6 +1982,22 @@ tr.is-mine td:first-child { box-shadow: inset 2px 0 0 var(--mine); }
   .pl-table :is(th, td):nth-child(8) { display: none; }
   .pl-table td, .pl-table thead th { padding-inline: var(--s2); }
   .pl-c-name { max-width: 140px; }
+
+  /* Two columns of names do not fit a 375px screen, so compare stacks: your
+     lineup, then the free pool under it. The whole thing scrolls as one pane
+     rather than two nested scrollers, which on a phone fight the gesture. */
+  .pl-compare { display: block; overflow: auto; }
+  /* Block rather than a one-column grid: a grid row is sized by the container,
+     so the first side was clipped mid-row and the second drawn over it. */
+  .pl-compare .cm-side { display: block; overflow: visible; }
+  .pl-compare .cm-side + .cm-side { border-top: 1px solid var(--line); }
+  .cm-row {
+    grid-template-columns: 34px minmax(0, 1fr) 40px 40px 44px;
+    gap: var(--s2);
+    padding: var(--s3) var(--s3);
+  }
+  .cm-head, .cm-sep { padding-inline: var(--s3); }
+  .cm-cols span { width: 40px; }
 
   #weeknav button { width: 30px; height: 30px; }
   #wk-label { min-width: 38px; }

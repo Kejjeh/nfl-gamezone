@@ -16,7 +16,7 @@ Read the relevant README section before changing the behaviour it describes.
 python -m http.server 8765              # serve; open http://localhost:8765 (file:// does NOT work: ES modules)
 for f in js/*.js; do node --check "$f"; done   # syntax check; expect no output
 node tools/bets-test.mjs                        # bet settlement; offline. expect: 102 passed, 0 failed
-node tools/season-test.mjs                      # season scoring; offline. expect: 76 passed, 0 failed
+node tools/season-test.mjs                      # season scoring + compare; offline. expect: 104 passed, 0 failed
 node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (free). expect: 0 failed
 npm test                                        # runs all three
 ```
@@ -24,7 +24,7 @@ npm test                                        # runs all three
 - CI (`.github/workflows/tests.yml`) runs the syntax check, `bets-test.mjs` and `season-test.mjs` on every push to `main` and every PR - every offline, deterministic check there is. It leaves out `worker-test.mjs` alone, because that one calls live ESPN. A new test harness belongs in CI unless it needs the network.
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
-- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. **Its pass count is not fixed** - it branches on whether any game is live, so only `0 failed` is the expectation (42 on a finished slate, 30 on another). `bets-test.mjs` is offline and deterministic, so its count is. Anything else is proved by the syntax check plus loading the page.
+- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. `season-test.mjs` and `bets-test.mjs` are both deterministic, so their counts are fixed. **`worker-test.mjs`'s is not** - it branches on whether any game is live, so only `0 failed` is the expectation there (42 on a finished slate, 30 on another). Anything else is proved by the syntax check plus loading the page.
 - Every page load hits ESPN and Sleeper public endpoints (free, unauthenticated, about 6-7 KB/s on a full slate). Nothing costs money.
 
 ## Architecture map
@@ -40,7 +40,7 @@ npm test                                        # runs all three
 | `js/bridge.js` | ESPN athlete id -> Sleeper player id (name + team + position; `espn_id` only as fast path) |
 | `js/feed.js` | cross-game merge, dedupe, filters, player follow, `tierOf()` play tiers, rendering |
 | `js/boxscore.js`, `js/scoring.js` | slate-wide stat table, leader ranking, fantasy points from box-score aggregates |
-| `js/season.js`, `js/players.js` | season-long layer: Sleeper's weekly stat files scored under the league's settings (`season.js`, tested by `tools/season-test.mjs`), and the full-window sortable player table with ownership (`players.js`). Shares no data path with the live feed - no ESPN, no bridge |
+| `js/season.js`, `js/players.js` | season-long layer: Sleeper's weekly stat files scored under the league's settings, plus the lineup/free-pool helpers (`season.js`, tested by `tools/season-test.mjs`), and the full-window view - sortable table with ownership, or Compare mode pairing your lineup against each slot's free agents (`players.js`). Shares no data path with the live feed - no ESPN, no bridge |
 | `js/panel.js`, `js/rail.js`, `js/matchup.js` | stats panel (incl. the per-game drive strip), game rail with starter markers, header score strip |
 | `js/poller.js`, `js/state.js`, `js/store.js` | backoff scheduler, one state object + pub/sub, localStorage with TTL |
 | `js/alerts.js` | WebAudio chimes, flash, desktop notifications |
@@ -120,6 +120,19 @@ npm test                                        # runs all three
 - **Do not validate a season total against summed `players_points`.** A matchup
   carries only the players on that roster that week, so a mid-season pickup is
   undercounted - one player read 81.8 against 30.4 that way. Compare per week.
+- **`hidden` does not hide an element a class gives a `display` to.** The
+  browser's own `[hidden] { display: none }` loses to any author rule, so
+  `.pl-chips`, `.pl-compare` and friends each need their own `[hidden]`
+  selector (one line next to `.pl-chips button:disabled`); `.overlay[hidden]`
+  is the same pattern. Setting `el.hidden = true` on a flex or grid element and
+  seeing it stay on screen is this, not a logic bug.
+- **How many games a free agent needs before he counts as an upgrade is the
+  manager's call**, not a constant - `state.players.minGames` starts at 3 and
+  is a control in the Compare bar. One thirty-point week tops any per-game
+  ranking, and which sample is enough depends on the league. Do not bake it in.
+- **Compare mode ranks by season points per game whatever the Pts column is
+  scoped to**, because a waiver claim is about the rest of the season. The meta
+  line says so when a week is selected; keep them in step.
 - **The phone media query lives in two places** (`app.css` twice and `PHONE` in `js/main.js`);
   all copies must stay identical. Specificity bit once: `body.panel-closed main` outranked the
   phone rule. Check a phone change at 375x812 and sideways (812x375).

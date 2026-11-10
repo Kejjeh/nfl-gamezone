@@ -261,6 +261,11 @@ export const OWNERSHIP = {
   all:  { label: 'Everyone', match: () => true },
   mine: { label: 'My team',  match: (r) => !!r.owner?.mine },
   free: { label: 'Free agents', match: (r) => !r.owner },
+  // The pool a waiver decision is actually made from: what you have and what
+  // you could have, with the ten other rosters - who are not available at any
+  // price - left out. Sorted by any column, anyone above your player is an
+  // upgrade, which neither "My team" nor "Free agents" can show on its own.
+  minefree: { label: 'Mine + FA', match: (r) => !r.owner || !!r.owner.mine },
   taken: { label: 'Rostered', match: (r) => !!r.owner && !r.owner.mine },
 };
 
@@ -294,6 +299,69 @@ export const SORTS = {
   pos:   (a, b) => POS_ORDER.indexOf(a.pos) - POS_ORDER.indexOf(b.pos) || shown(b) - shown(a),
   owner: (a, b) => (a.owner?.label || 'zzz').localeCompare(b.owner?.label || 'zzz') || shown(b) - shown(a),
 };
+
+/* ------------------------------------------- lineup against the free pool */
+
+// Which positions can fill a lineup slot. Sleeper names flex slots by what
+// they accept, and a league can carry several kinds; anything unrecognised
+// falls back to the slot's own name, which is right for QB/RB/WR/TE/K/DEF and
+// harmless for a slot type this league does not use.
+export function positionsForSlot(slot, playerPos = null) {
+  switch (slot) {
+    case 'FLEX': return new Set(['RB', 'WR', 'TE']);
+    case 'WRRB_FLEX': return new Set(['RB', 'WR']);
+    case 'REC_FLEX': return new Set(['WR', 'TE']);
+    case 'SUPER_FLEX': return new Set(['QB', 'RB', 'WR', 'TE']);
+    case 'BN': case 'IR': case 'TAXI': case null: case undefined:
+      return new Set(playerPos ? [playerPos] : []);
+    default: return new Set([slot]);
+  }
+}
+
+// The best unrostered players who could fill a slot. `minGames` is the one
+// judgement call in here and it is deliberately a visible control rather than
+// a constant: a free agent with one big week outranks a steady starter on
+// points per game, and how much of a sample is enough before that counts as an
+// upgrade is the manager's call, not this code's.
+export function freeAgentsFor(rows, positions, { minGames = 1, limit = 12, by = 'ppg' } = {}) {
+  const out = rows.filter((r) => !r.owner && positions.has(r.pos) && r.games >= minGames);
+  out.sort((a, b) => (b[by] ?? -1) - (a[by] ?? -1));
+  return out.slice(0, limit);
+}
+
+// How much better the best available player is, on the measure being compared.
+// null when there is nobody to compare against, which is a different thing
+// from a zero gap and has to read differently.
+// Your roster laid out as a lineup: every starting slot in the league's own
+// order, then the bench. Reads the roster's own `starters` array rather than
+// the matchup's copy, because that one is filtered of empty slots and so stops
+// lining up with the slot labels the moment a slot is left empty.
+export function lineupFor({ roster, slots, byId }) {
+  if (!roster) return { starters: [], bench: [] };
+
+  const ids = roster.starters || [];
+  const used = new Set();
+  const starters = slots.map((slot, i) => {
+    const raw = ids[i];
+    const id = raw && String(raw) !== '0' ? String(raw) : null;
+    if (id) used.add(id);
+    return { slot, id, row: id ? byId.get(id) || null : null };
+  });
+
+  const bench = (roster.players || []).map(String)
+    .filter((id) => !used.has(id))
+    .map((id) => ({ slot: 'BN', id, row: byId.get(id) || null }));
+
+  return { starters, bench };
+}
+
+export function upgradeGap(mineRow, candidates, by = 'ppg') {
+  if (!candidates.length) return null;
+  const best = candidates[0][by];
+  if (best == null) return null;
+  const have = mineRow ? (mineRow[by] ?? 0) : 0;
+  return Math.round((best - have) * 100) / 100;
+}
 
 export function sortRows(rows, key = 'pts', dir = 'desc') {
   const cmp = SORTS[key] || SORTS.pts;

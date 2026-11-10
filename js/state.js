@@ -56,7 +56,15 @@ export const state = {
 
   // The Players view: a full-window sortable table of every fantasy-relevant
   // player, with ownership from the connected league. `week` null = season.
-  players: { week: null, pos: 'all', own: 'all', q: '', sort: 'pts', dir: 'desc' },
+  // `mode` is 'table' (everyone, sortable) or 'compare' (your lineup beside
+  // the free agents who could fill each slot). `slot` is the index of the
+  // selected lineup row in compare mode. `minGames` is the sample a free agent
+  // needs before counting as an upgrade - a visible control, not a constant,
+  // because how much of a sample is enough is the manager's call.
+  players: {
+    mode: 'table', week: null, pos: 'all', own: 'all', q: '',
+    sort: 'pts', dir: 'desc', slot: 0, minGames: 3,
+  },
 
   // 'feed' (the live three-column dashboard) or 'players'.
   view: 'feed',

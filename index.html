@@ -104,6 +104,15 @@
            aria-label="Search players" autocomplete="off" spellcheck="false"
            autocapitalize="off">
 
+    <!-- Two arrangements of the same rows. Table answers "who is good"; Compare
+         answers "is anyone available better than the player in this slot",
+         which a single sorted list cannot, because the two sides are
+         interleaved by points rather than paired by slot. -->
+    <div class="pl-chips" id="pl-mode" role="group" aria-label="Arrangement">
+      <button type="button" data-mode="table" aria-pressed="true">Table</button>
+      <button type="button" data-mode="compare" aria-pressed="false">Compare</button>
+    </div>
+
     <div class="pl-chips" id="pl-scope" role="group" aria-label="Scope">
       <button type="button" data-scope="season" aria-pressed="true">Season</button>
       <button type="button" data-scope="week" aria-pressed="false">Week</button>
@@ -124,12 +133,25 @@
       <button type="button" data-own="all" aria-pressed="true">Everyone</button>
       <button type="button" data-own="mine" aria-pressed="false">My team</button>
       <button type="button" data-own="free" aria-pressed="false">Free agents</button>
+      <!-- Your players and the free pool together, with the ten rosters you
+           cannot sign from left out: sort by any column and anyone above one of
+           yours is an upgrade. -->
+      <button type="button" data-own="minefree" aria-pressed="false">Mine + FA</button>
       <button type="button" data-own="taken" aria-pressed="false">Rostered</button>
     </div>
+
+    <!-- How many games a free agent must have played to count. A threshold,
+         so it is a control rather than a constant: one 30-point week otherwise
+         tops the per-game column. -->
+    <label class="pl-min" id="pl-min" hidden>Min games
+      <input type="number" id="pl-min-n" min="1" max="18" step="1" value="3"
+             inputmode="numeric">
+    </label>
   </div>
 
   <div class="pl-meta" id="pl-meta" role="status"></div>
   <div class="pl-wrap" id="pl-table"></div>
+  <div class="pl-compare" id="pl-compare" hidden></div>
 </section>
 
 <!-- Phone navigation. A phone cannot show three panes at once, so it shows

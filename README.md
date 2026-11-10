@@ -129,6 +129,58 @@ points while games, per-game and best stay season-wide, which is the comparison
 worth having. Players on a bye are absent from a week rather than listed at
 zero, because zero reads as "played and did nothing".
 
+
+### My team and the free pool, two ways
+
+A waiver decision is one question: *is anyone available better than the player
+in this slot?* The ownership chips were mutually exclusive, so the table could
+show your team or the free agents but never both, and the question had no
+answer on one screen. There are now two arrangements of the same rows, because
+the question has two shapes.
+
+**Mine + FA** is a fifth ownership chip. It keeps your players and the free
+pool and drops the other eleven rosters — the only players in the league you
+cannot sign at any price. Sort by any column and anyone above one of yours is
+an upgrade. This is the arrangement for browsing: *who are the best available
+backs, and where do mine fall among them.*
+
+**Compare** is a second mode, beside Table in the bar. Your lineup runs down
+the left in Sleeper's own slot order — QB, RB, RB, WR, WR, TE, FLEX, K, DEF,
+then the bench — each row carrying its points, per-game, and a green badge
+showing how much better the best available player at that slot is. The right
+column is that slot's free-agent board. Click any lineup row to change it.
+
+```
+MY TEAM                      Pts   PPG   Gap  │ BEST FREE AGENTS · RB
+QB   Josh Allen            206.7  25.8  -5.1  │ 4g  Kyle Monangai   59.3  14.8  +7.0
+RB   Devin Singletary       39.4   7.9  +7.0  │ 8g  RJ Harvey       67.4   8.4  +0.6
+RB   D'Andre Swift         153.8  17.1  -2.3  │ …
+```
+
+The left column is the whole report: a negative gap means you already hold the
+best there is at that slot, and the green ones are the roster spots worth
+spending a waiver claim on. The badge is the only colour in the view.
+
+A slot's eligible positions come from the slot itself, not from the player
+standing in it — FLEX offers RB, WR and TE, `WRRB_FLEX` drops the tight end,
+`SUPER_FLEX` admits the quarterback — so the board is what could legally fill
+the spot. A bench slot has no position of its own and takes one from its
+occupant. A rostered player with no stats row keeps his slot rather than
+renumbering the ones below him, and if he is not in Sleeper's active-player
+dictionary either, the row says so: not being on an NFL team is itself the
+finding about that roster spot.
+
+**Minimum games is a control, not a constant.** It starts at 3. One
+thirty-point week puts a waiver flyer at the top of any per-game ranking, and
+how much of a sample counts as evidence is a judgement about your own league
+and your own risk appetite, not a number this code gets to pick for you. It
+sits in the bar in compare mode and the meta line states whichever value is in
+force.
+
+Both sides are ranked by **season** points per game however the Pts column is
+scoped, because a waiver claim is about the rest of the season rather than the
+week just gone. When a week is selected the meta line says so.
+
 ### Fantasy points are a dot product
 
 Sleeper publishes per-week stat files for every player, and names their fields
@@ -223,7 +275,7 @@ js/feed.js      cross-game merge, dedupe, filters, player follow, rendering
 js/boxscore.js  slate-wide player stat table and leader ranking
 js/scoring.js   fantasy points from stat lines, under league settings
 js/season.js    Sleeper's weekly stat files, scored under the league's settings
-js/players.js   the full-window season player table
+js/players.js   the full-window season player table and the lineup-vs-free-agents compare
 js/panel.js     the stats panel: My Team, leaders board, per-game box score + drives
 js/rail.js      the game rail, with per-game starter counts
 js/matchup.js   the header score strip

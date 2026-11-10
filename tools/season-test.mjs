@@ -151,6 +151,92 @@ check('a search matching nothing yields nothing',
 check('filters combine', ids(season.filterRows(owned, { pos: 'FLEX', own: 'free' })), ['2', '4']);
 check('an unknown ownership key falls back to everyone',
   season.filterRows(owned, { own: 'nonsense' }).length, 5);
+// The pool a waiver decision is actually made from. The ten rosters you
+// cannot sign from are the only thing left out, so your player and his
+// replacement sit in one sorted list.
+check('mine plus the free pool, without the other rosters',
+  ids(season.filterRows(owned, { own: 'minefree' })), ['2', '3', '4']);
+
+/* ----------------------------------------------------- compare: the slots */
+
+// Which positions may fill a lineup slot. A wrong answer here offers a kicker
+// as a flex upgrade, or hides every candidate for a slot.
+const pos = (slot, playerPos) => [...season.positionsForSlot(slot, playerPos)].sort();
+
+check('a named slot takes its own position', pos('QB'), ['QB']);
+check('a kicker slot is not a flex', pos('K'), ['K']);
+check('FLEX is RB, WR or TE', pos('FLEX'), ['RB', 'TE', 'WR']);
+check('WRRB_FLEX excludes the tight end', pos('WRRB_FLEX'), ['RB', 'WR']);
+check('REC_FLEX excludes the back', pos('REC_FLEX'), ['TE', 'WR']);
+check('SUPER_FLEX admits the quarterback', pos('SUPER_FLEX'), ['QB', 'RB', 'TE', 'WR']);
+// A bench slot has no position of its own, so the player standing in it
+// supplies one. Without him there is nothing to compare against, and offering
+// every position would read as an upgrade at a slot that does not exist.
+check('a bench slot follows the player in it', pos('BN', 'TE'), ['TE']);
+check('an empty bench slot compares against nothing', pos('BN', null), []);
+check('an absent slot behaves like a bench slot', pos(undefined, 'WR'), ['WR']);
+
+/* ------------------------------------------------ compare: the free pool */
+
+// Fixture state: '2' Bo Wide (WR, 2 games, 6.0 ppg) and '4' Di End (TE, 1
+// game, 0.0 ppg) are the only free agents. '1' Al Back is the RB, and he is
+// on a rival roster - so no RB is available at any threshold.
+const fa = (positions, opts) =>
+  season.freeAgentsFor(owned, new Set(positions), opts).map((r) => r.id);
+
+check('the free pool is ranked by points per game',
+  fa(['WR', 'TE'], { minGames: 1 }), ['2', '4']);
+check('a rostered player is never offered', fa(['RB'], { minGames: 1 }), []);
+check('the games threshold bites', fa(['WR', 'TE'], { minGames: 2 }), ['2']);
+check('and can exclude everyone', fa(['WR', 'TE'], { minGames: 3 }), []);
+check('the limit caps the list', fa(['WR', 'TE'], { minGames: 1, limit: 1 }), ['2']);
+check('a position with no free agent yields nothing', fa(['QB'], { minGames: 1 }), []);
+check('an empty position set yields nothing', fa([], { minGames: 1 }), []);
+
+/* -------------------------------------------------- compare: the upgrade */
+
+const byId = new Map(owned.map((r) => [r.id, r]));
+const best = season.freeAgentsFor(owned, new Set(['WR']), { minGames: 1 });
+
+// Cy Quarter scores 22.5 a game and the best free WR scores 6.0, so the gap
+// is negative: you already have the better player. That is the useful answer,
+// not a missing one.
+check('a gap can be negative', season.upgradeGap(byId.get('3'), best), -16.5);
+check('a gap is positive when the pool is better',
+  season.upgradeGap(byId.get('4'), best), 6);
+check('no candidate means no gap', season.upgradeGap(byId.get('3'), []), null);
+// An empty slot is worth zero, not "unknown": the whole free agent is the gain.
+check('an empty slot compares against zero', season.upgradeGap(null, best), 6);
+
+/* -------------------------------------------------- compare: the lineup */
+
+{
+  const roster = { starters: ['3', '0', '1'], players: ['3', '1', 'PIT'] };
+  const slots = ['QB', 'RB', 'WR'];
+  const { starters, bench } = season.lineupFor({ roster, slots, byId });
+
+  check('a starter lands in its own slot',
+    starters.map((e) => [e.slot, e.id]), [['QB', '3'], ['RB', null], ['WR', '1']]);
+  // Sleeper writes "0" for an unfilled slot. Treating it as a player id would
+  // look up a player that does not exist and read as a roster hole either way,
+  // but it must not print "0" as a name.
+  check('an unfilled slot is empty rather than player zero', starters[1].row, null);
+  check('a starter carries its row', starters[0].row?.name, 'Cy Quarter');
+  check('whoever is not starting is on the bench',
+    bench.map((e) => [e.slot, e.id]), [['BN', 'PIT']]);
+  check('no roster means no lineup',
+    season.lineupFor({ roster: null, slots, byId }),
+    { starters: [], bench: [] });
+
+  // A rostered player with no stats row (injured all season, say) keeps his
+  // slot. Dropping him would silently renumber every slot below him.
+  const thin = season.lineupFor({
+    roster: { starters: ['999'], players: ['999'] }, slots: ['QB'], byId,
+  });
+  check('a player with no stats keeps his slot',
+    [thin.starters.length, thin.starters[0].id, thin.starters[0].row], [1, '999', null]);
+  check('and is not duplicated onto the bench', thin.bench.length, 0);
+}
 
 /* ----------------------------------------------------------------- sorting */
 
