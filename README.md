@@ -115,6 +115,80 @@ next week's empty points — `0 of 146 exact`, with nothing actually wrong.
 into a Thursday night game, so neither is right in both directions and the week
 being displayed is.
 
+## Win probability
+
+**Status: the model and its tests are in; nothing is wired to the screen yet.**
+This section is the record of what the number is worth, so the UI that lands
+next can say it honestly.
+
+The header's bar today splits the two totals by share of points scored. As a
+forecast that is bad — worse than a coin flip. `js/winprob.js` replaces it with
+a model fitted in [`Kejjeh/gridiron`](https://github.com/Kejjeh/gridiron) on
+this league's 2023–24 seasons and tested on 2025–26, which the fit never saw.
+
+For every starter on both sides:
+
+```
+f    = share of his game still to play     1 pre-game, 0 final/bye/no game
+mu   = proj * f                            points still to come
+sd   = f^(g/2) * (a[pos] + b[pos] * proj)  their spread
+
+P(A wins) = Phi( (nowA - nowB + sum muA - sum muB) / (k * sqrt(sum sd^2)) )
+```
+
+`now` is Sleeper's own matchup total and is never recomputed — the same rule
+the matchup strip has always followed. The model only ever adds what is left.
+
+### What it is worth
+
+Held-out 2025–26, 1,884 matchup × checkpoint states. Log loss, lower better,
+a coin flip is 0.693:
+
+| share of projected points still to come | live | pre-game, frozen at kickoff | the bar shown today |
+|---|---|---|---|
+| all | **0.424** | 0.680 | 1.153 |
+| late (<25%) | **0.215** | 0.675 | 0.594 |
+| mid (25–60%) | **0.455** | 0.690 | 0.626 |
+| early (60–90%) | **0.573** | 0.682 | 1.224 |
+| pre (>90%) | **0.663** | 0.681 | 2.547 |
+
+Two things to carry into the UI. It gets genuinely sharp once games are played
+— at 80% late in the day, that side wins about 80% of the time. And **before
+kickoff it is barely better than a coin flip**, because Sleeper's pre-game
+projections are weak in this league; a wider pre-game spread was tried and did
+not help. Label it as a soft estimate rather than adding decimals.
+
+### Two projection keys that are not in the stats vocabulary
+
+The season table scores Sleeper's weekly *stats* files. Projections use a
+slightly different vocabulary, and two keys this league scores are absent from
+them. Measured 2026-11-15 across week 9's 3,305 projection rows:
+
+| league scores | projections carry | fix |
+|---|---|---|
+| `fgmiss` | `fgmiss_30_39`, `fgmiss_40_49`, `fgmiss_50p` | sum the bands |
+| `fgm_50_59`, `fgm_60p` | `fgm_50p` only | credit the band to `fgm_50_59` |
+
+A plain dot product drops both. Scored against Sleeper's own `pts_std`, the 30
+real week-9 kicker rows come out **1.43 points low on average, worst 2.32**;
+with the mapping, 0.016 and 0.050, which is Sleeper's own two-decimal
+rounding. The gridiron handoff names the first of these; the second is larger
+and was found here.
+
+Still light, with no upstream fix: `st_ff` and `st_fum_rec` are in the stats
+files and not in projections, so a projected defence is slightly under.
+
+### Tests
+
+`tools/winprob-test.mjs` — 109 checks, offline, in CI. Eight held-out
+snapshots from the study, each carrying the probability gridiron's own
+implementation produced, reproduce to within 2×10⁻⁴ against a ±5×10⁻⁴ bar; the
+rest covers the clock, the projection mapping, out tags and the arithmetic the
+fixtures cannot reach. Ten deliberate mutations — dropping either alias,
+treating a bye as a full game, reading the clock as minutes, letting a settled
+week read 50%, removing the `f` shrink, nudging `k` to the training argmin —
+were each caught.
+
 ## The season player table
 
 Press `t`, or the table icon in the header, for a full-window sortable table of
@@ -276,6 +350,8 @@ js/boxscore.js  slate-wide player stat table and leader ranking
 js/scoring.js   fantasy points from stat lines, under league settings
 js/season.js    Sleeper's weekly stat files, scored under the league's settings
 js/players.js   the full-window season player table and the lineup-vs-free-agents compare
+js/winprob.js   live win probability: the model, pure and testable
+js/winprob-consts.js  its fitted constants, copied from the gridiron study
 js/panel.js     the stats panel: My Team, leaders board, per-game box score + drives
 js/rail.js      the game rail, with per-game starter counts
 js/matchup.js   the header score strip

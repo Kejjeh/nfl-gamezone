@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test:
-    name: Syntax check, bets and season scoring tests
+    name: Syntax check, bets, season and win-probability tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -43,3 +43,10 @@ jobs:
       # needs no network and its count does not move with the slate.
       - name: Season scoring tests (offline)
         run: node tools/season-test.mjs
+
+      # Offline: the fixtures are held-out snapshots saved with the
+      # probability the gridiron reference implementation produced for them,
+      # so this checks the browser's arithmetic against a number computed
+      # elsewhere, with no network.
+      - name: Win probability tests (offline)
+        run: node tools/winprob-test.mjs

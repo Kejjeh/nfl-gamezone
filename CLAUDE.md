@@ -17,14 +17,15 @@ python -m http.server 8765              # serve; open http://localhost:8765 (fil
 for f in js/*.js; do node --check "$f"; done   # syntax check; expect no output
 node tools/bets-test.mjs                        # bet settlement; offline. expect: 102 passed, 0 failed
 node tools/season-test.mjs                      # season scoring + compare; offline. expect: 104 passed, 0 failed
+node tools/winprob-test.mjs                     # live win probability; offline. expect: 109 passed, 0 failed
 node tools/worker-test.mjs                      # push Worker; calls LIVE ESPN (free). expect: 0 failed
-npm test                                        # runs all three
+npm test                                        # runs all four
 ```
 
-- CI (`.github/workflows/tests.yml`) runs the syntax check, `bets-test.mjs` and `season-test.mjs` on every push to `main` and every PR - every offline, deterministic check there is. It leaves out `worker-test.mjs` alone, because that one calls live ESPN. A new test harness belongs in CI unless it needs the network.
+- CI (`.github/workflows/tests.yml`) runs the syntax check, `bets-test.mjs`, `season-test.mjs` and `winprob-test.mjs` on every push to `main` and every PR - every offline, deterministic check there is. It leaves out `worker-test.mjs` alone, because that one calls live ESPN. A new test harness belongs in CI unless it needs the network.
 - `.claude/launch.json` defines the same server as `gamezone` (port 8765) for the preview pane.
 - `?week=8` pins a finished week so the feed assembles with nothing live; `?seasontype=1|2|3` = pre/regular/post.
-- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. `season-test.mjs` and `bets-test.mjs` are both deterministic, so their counts are fixed. **`worker-test.mjs`'s is not** - it branches on whether any game is live, so only `0 failed` is the expectation there (42 on a finished slate, 30 on another). Anything else is proved by the syntax check plus loading the page.
+- Tests are plain Node scripts in `tools/` (no dependencies; `package.json` exists only so Node loads `js/*.js` as ES modules). `worker-test.mjs` needs the network; it intercepts the final push to Apple, so it never buzzes a phone. `season-test.mjs` is offline: `tools/season-fixtures.mjs` holds ten real Sleeper week-9 stat records paired with the points Sleeper's own matchups endpoint awarded. Regenerate it only against a completed week, and keep the pairing - a fixture without its upstream truth tests nothing. `season-test.mjs`, `bets-test.mjs` and `winprob-test.mjs` are all deterministic, so their counts are fixed. **`worker-test.mjs`'s is not** - it branches on whether any game is live, so only `0 failed` is the expectation there (42 on a finished slate, 30 on another). Anything else is proved by the syntax check plus loading the page.
 - Every page load hits ESPN and Sleeper public endpoints (free, unauthenticated, about 6-7 KB/s on a full slate). Nothing costs money.
 
 ## Architecture map
@@ -41,6 +42,7 @@ npm test                                        # runs all three
 | `js/feed.js` | cross-game merge, dedupe, filters, player follow, `tierOf()` play tiers, rendering |
 | `js/boxscore.js`, `js/scoring.js` | slate-wide stat table, leader ranking, fantasy points from box-score aggregates |
 | `js/season.js`, `js/players.js` | season-long layer: Sleeper's weekly stat files scored under the league's settings, plus the lineup/free-pool helpers (`season.js`, tested by `tools/season-test.mjs`), and the full-window view - sortable table with ownership, or Compare mode pairing your lineup against each slot's free agents (`players.js`). Shares no data path with the live feed - no ESPN, no bridge |
+| `js/winprob.js`, `js/winprob-consts.js` | live fantasy win probability: pure model (clock share, projections scored, normal CDF, per-starter swing) and the constants fitted in `Kejjeh/gridiron`. Tested by `tools/winprob-test.mjs` against held-out fixtures from that study; unmodified source constants kept at `docs/live_pwin_v1.json` |
 | `js/panel.js`, `js/rail.js`, `js/matchup.js` | stats panel (incl. the per-game drive strip), game rail with starter markers, header score strip |
 | `js/poller.js`, `js/state.js`, `js/store.js` | backoff scheduler, one state object + pub/sub, localStorage with TTL |
 | `js/alerts.js` | WebAudio chimes, flash, desktop notifications |
@@ -133,6 +135,37 @@ npm test                                        # runs all three
 - **Compare mode ranks by season points per game whatever the Pts column is
   scoped to**, because a waiver claim is about the rest of the season. The meta
   line says so when a week is selected; keep them in step.
+- **Sleeper's projections and its stats files are not the same vocabulary**,
+  and two keys a league scores are missing from projections entirely. Measured
+  2026-11-15 on week 9 (3,305 projection rows): projections carry `fgm_50p`
+  and no `fgm_50_59`/`fgm_60p`, and `fgmiss_<band>` and no plain `fgmiss`. The
+  stats files carry both forms, which is why `season.js` never had to care.
+  `ALIASES` in `winprob.js` derives them. Without that mapping, the 30 real
+  week-9 kicker projections score **1.43 points low on average, worst 2.32**
+  against Sleeper's own `pts_std`; with it, 0.016 and 0.050, which is
+  Sleeper's two-decimal rounding. The handoff names only `fgmiss`; `fgm_50p`
+  is the bigger of the two. Check this again if a projection ever looks light.
+- **`st_ff` and `st_fum_rec` are stats-only.** This league scores them and
+  Sleeper's projection rows do not carry them, so a projected defence is a
+  little light and there is no upstream number to fix it with. Known gap, not
+  a bug.
+- **A starter with no game gets `f = 0`, never 1.** Bye, empty slot (`"0"` in
+  `starters`), or a team the scoreboard does not carry: he scores nothing this
+  week, and a full game still to come would invent points on his side.
+- **"Matters most" is a swing, not the handoff's `P(+10) - P`.** That formula
+  is degenerate here: P depends on the two side totals, so a flat +10 is the
+  same number whoever scored it and every starter ties. `swing()` is his own
+  best case against his own worst - the only thing in this model that tells
+  starters apart.
+- **The study's sentence about the spread exponent is backwards.** `f^(g/2)`
+  with g = 0.78 is `f^0.39`, which keeps *more* spread than `sqrt(f)` at every
+  f < 1 (0.762 against 0.707 at half a game), not less. The fitted value is
+  used as fitted; only the prose in `docs/research/LIVE_PWIN.md` is wrong, and
+  `winprob-test.mjs` asserts the direction so it cannot creep into the code.
+- **Before kickoff the win probability is barely better than a coin flip**
+  (held-out log loss 0.663 against 0.693). Sleeper's pre-game projections are
+  weak in this league and a wider spread was tried and did not help. Say so in
+  words in the UI; do not dress it up with decimals.
 - **The phone media query lives in two places** (`app.css` twice and `PHONE` in `js/main.js`);
   all copies must stay identical. Specificity bit once: `body.panel-closed main` outranked the
   phone rule. Check a phone change at 375x812 and sideways (812x375).
@@ -163,6 +196,7 @@ Load these with the Skill tool when the situation comes up; the user does not ne
 | Adding a chart, stat tile or leaders view to the stats panel | `dataviz` |
 | Any commit | `safe-commit` |
 | Opening or merging a PR / independent review before merge | `sop-ship-pr` / `code-review` |
+| Touching `winprob.js`, its constants, or the projections path, where a wrong number reads as a confident percentage | `sop-fail-loud`, then re-run `winprob-test.mjs` |
 | A change makes this guide or the README's measured numbers untrue | `sop-project-guide` |
 
 ## Before you finish any task
